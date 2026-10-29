@@ -18,7 +18,7 @@ exports.run = async () => {
   assert.strictEqual(projects.getChildren(roots[0]).length, 1, 'tree lists sessions');
 
   // Open all four existing chats: grid should grow to 4 panes, one terminal each.
-  for (const p of found) await board.openSession(p.path, p.sessions[0].id, { title: p.sessions[0].title, quiet: true });
+  for (const p of found) await board.openSession(p.path, p.sessions[0].id, { title: p.sessions[0].title, quiet: true, kind: 'terminal' });
   await sleep(4000);
   const groups = vscode.window.tabGroups.all;
   assert.strictEqual(groups.length, 4, 'four panes');
@@ -29,7 +29,7 @@ exports.run = async () => {
   for (const p of found) assert.ok(calls.some(c => c.startsWith(p.path + ' :: --resume ' + p.sessions[0].id)), 'resumed in its own folder: ' + p.path);
 
   // A new session gets an explicit id so it can be restored later; it lands in a fifth pane.
-  await board.openSession(found[0].path, undefined, { quiet: true });
+  await board.openSession(found[0].path, undefined, { quiet: true, kind: 'terminal' });
   await sleep(2500);
   assert.strictEqual(vscode.window.tabGroups.all.length, 5, 'grid grew to 5 panes');
   assert.ok(fs.readFileSync(path.join(tmp, 'claude-calls.log'), 'utf8').includes('--session-id '), 'new session uses --session-id');
@@ -61,7 +61,7 @@ exports.run = async () => {
 
   // Close all then restore from saved state.
   const before = board.store.get('board');
-  for (const e of [...board.open.values()]) e.terminal.dispose();
+  for (const e of [...board.open.values()]) e.view.dispose();
   await sleep(1500);
   await board.store.update('board', before);
   await board.restore();

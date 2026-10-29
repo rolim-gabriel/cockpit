@@ -147,7 +147,7 @@ class BoardProvider {
     if (el) return [];
     const cols = this.board.columnsByName();
     return [...this.board.open.values()]
-      .map(e => ({ entry: e, column: cols.get(e.terminal.name) }))
+      .map(e => ({ entry: e, column: cols.get(e.name) }))
       .sort((a, b) => (a.column || 99) - (b.column || 99));
   }
 
@@ -155,9 +155,9 @@ class BoardProvider {
     const t = new vscode.TreeItem(`${path.basename(e.project)}: ${e.title}`);
     const [icon, color, label] = STATE_ICON[e.state];
     t.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
-    t.description = `${column ? `pane ${column} · ` : ''}${label}`;
+    t.description = `${column ? `pane ${column} · ` : ''}${e.kind} · ${label}`;
     t.tooltip = `${e.project}\nSession ${e.sessionId}`;
-    t.contextValue = 'boardItem';
+    t.contextValue = 'boardItem.' + e.kind;
     t.command = { command: 'claudeCC.focusBoardItem', title: 'Focus', arguments: [e.sessionId] };
     t.id = 'b:' + e.sessionId;
     return t;
