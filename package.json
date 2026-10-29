@@ -1,0 +1,184 @@
+{
+  "name": "claude-command-center",
+  "displayName": "Claude Command Center",
+  "description": "Run many Claude Code sessions, one per project folder, side by side in a resizable grid inside a single VS Code window. Resumes your existing conversations with full history.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "ai",
+    "multi-session",
+    "grid"
+  ],
+  "icon": "media/icon.png",
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeCC",
+          "title": "Claude Command Center",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeCC": [
+        {
+          "id": "claudeCC.projects",
+          "name": "Projects & Sessions"
+        },
+        {
+          "id": "claudeCC.board",
+          "name": "Board (open panes)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "claudeCC.projects",
+        "contents": "No projects yet.\n[Add Project Folder](command:claudeCC.addProject)\nExisting Claude Code conversations are discovered automatically from your Claude data folder."
+      },
+      {
+        "view": "claudeCC.board",
+        "contents": "No sessions open on the board.\n[Open Sessions as Grid](command:claudeCC.openGrid)\n[Restore Last Board](command:claudeCC.restoreBoard)"
+      }
+    ],
+    "commands": [
+      { "command": "claudeCC.addProject", "title": "Add Project Folder", "category": "Claude CC", "icon": "$(new-folder)" },
+      { "command": "claudeCC.removeProject", "title": "Unpin Project", "category": "Claude CC", "icon": "$(pinned)" },
+      { "command": "claudeCC.pinProject", "title": "Pin Project", "category": "Claude CC", "icon": "$(pin)" },
+      { "command": "claudeCC.refresh", "title": "Refresh", "category": "Claude CC", "icon": "$(refresh)" },
+      { "command": "claudeCC.newSession", "title": "New Claude Session", "category": "Claude CC", "icon": "$(add)" },
+      { "command": "claudeCC.openLatest", "title": "Resume Latest Session", "category": "Claude CC", "icon": "$(debug-continue)" },
+      { "command": "claudeCC.openSession", "title": "Open in Board", "category": "Claude CC", "icon": "$(terminal)" },
+      { "command": "claudeCC.openSessionNewPane", "title": "Open as Tab in Active Pane", "category": "Claude CC", "icon": "$(empty-window)" },
+      { "command": "claudeCC.forkSession", "title": "Fork Session (new branch of history)", "category": "Claude CC", "icon": "$(repo-forked)" },
+      { "command": "claudeCC.previewSession", "title": "Preview Conversation", "category": "Claude CC", "icon": "$(eye)" },
+      { "command": "claudeCC.copyResume", "title": "Copy Resume Command", "category": "Claude CC" },
+      { "command": "claudeCC.addToWorkspace", "title": "Add Folder to Workspace (Explorer)", "category": "Claude CC" },
+      { "command": "claudeCC.revealProject", "title": "Reveal in File Explorer", "category": "Claude CC" },
+      { "command": "claudeCC.openGrid", "title": "Open Sessions as Grid...", "category": "Claude CC", "icon": "$(layout)" },
+      { "command": "claudeCC.layout", "title": "Set Grid Layout...", "category": "Claude CC", "icon": "$(editor-layout)" },
+      { "command": "claudeCC.tidy", "title": "Tidy Board (one session per pane)", "category": "Claude CC", "icon": "$(layout-panel-justify)" },
+      { "command": "claudeCC.restoreBoard", "title": "Restore Last Board", "category": "Claude CC", "icon": "$(history)" },
+      { "command": "claudeCC.closeBoard", "title": "Close All Board Sessions", "category": "Claude CC", "icon": "$(close-all)" },
+      { "command": "claudeCC.focusPane", "title": "Focus Session...", "category": "Claude CC", "icon": "$(search)" },
+      { "command": "claudeCC.maximize", "title": "Maximize / Restore Current Pane", "category": "Claude CC", "icon": "$(screen-full)" },
+      { "command": "claudeCC.broadcast", "title": "Send Prompt to Several Sessions...", "category": "Claude CC", "icon": "$(broadcast)" },
+      { "command": "claudeCC.focusBoardItem", "title": "Focus", "category": "Claude CC" },
+      { "command": "claudeCC.closeBoardItem", "title": "Close Session", "category": "Claude CC", "icon": "$(close)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "claudeCC.addProject", "when": "view == claudeCC.projects", "group": "navigation@1" },
+        { "command": "claudeCC.openGrid", "when": "view == claudeCC.projects", "group": "navigation@2" },
+        { "command": "claudeCC.refresh", "when": "view == claudeCC.projects", "group": "navigation@3" },
+        { "command": "claudeCC.layout", "when": "view == claudeCC.board", "group": "navigation@1" },
+        { "command": "claudeCC.tidy", "when": "view == claudeCC.board", "group": "navigation@2" },
+        { "command": "claudeCC.broadcast", "when": "view == claudeCC.board", "group": "navigation@3" },
+        { "command": "claudeCC.restoreBoard", "when": "view == claudeCC.board", "group": "navigation@4" },
+        { "command": "claudeCC.closeBoard", "when": "view == claudeCC.board", "group": "navigation@5" }
+      ],
+      "view/item/context": [
+        { "command": "claudeCC.newSession", "when": "view == claudeCC.projects && viewItem =~ /^project/", "group": "inline@1" },
+        { "command": "claudeCC.openLatest", "when": "view == claudeCC.projects && viewItem =~ /^project/", "group": "inline@2" },
+        { "command": "claudeCC.pinProject", "when": "view == claudeCC.projects && viewItem == project.discovered", "group": "inline@3" },
+        { "command": "claudeCC.removeProject", "when": "view == claudeCC.projects && viewItem == project.pinned", "group": "inline@3" },
+        { "command": "claudeCC.newSession", "when": "view == claudeCC.projects && viewItem =~ /^project/", "group": "1_open@1" },
+        { "command": "claudeCC.openLatest", "when": "view == claudeCC.projects && viewItem =~ /^project/", "group": "1_open@2" },
+        { "command": "claudeCC.addToWorkspace", "when": "view == claudeCC.projects && viewItem =~ /^project/", "group": "2_folder@1" },
+        { "command": "claudeCC.revealProject", "when": "view == claudeCC.projects && viewItem =~ /^project/", "group": "2_folder@2" },
+        { "command": "claudeCC.pinProject", "when": "view == claudeCC.projects && viewItem == project.discovered", "group": "3_pin@1" },
+        { "command": "claudeCC.removeProject", "when": "view == claudeCC.projects && viewItem == project.pinned", "group": "3_pin@1" },
+
+        { "command": "claudeCC.openSessionNewPane", "when": "view == claudeCC.projects && viewItem == session", "group": "inline@1" },
+        { "command": "claudeCC.previewSession", "when": "view == claudeCC.projects && viewItem == session", "group": "inline@2" },
+        { "command": "claudeCC.openSession", "when": "view == claudeCC.projects && viewItem == session", "group": "1_open@1" },
+        { "command": "claudeCC.openSessionNewPane", "when": "view == claudeCC.projects && viewItem == session", "group": "1_open@2" },
+        { "command": "claudeCC.forkSession", "when": "view == claudeCC.projects && viewItem == session", "group": "1_open@3" },
+        { "command": "claudeCC.previewSession", "when": "view == claudeCC.projects && viewItem == session", "group": "2_info@1" },
+        { "command": "claudeCC.copyResume", "when": "view == claudeCC.projects && viewItem == session", "group": "2_info@2" },
+
+        { "command": "claudeCC.closeBoardItem", "when": "view == claudeCC.board && viewItem == boardItem", "group": "inline@1" }
+      ],
+      "commandPalette": [
+        { "command": "claudeCC.removeProject", "when": "false" },
+        { "command": "claudeCC.pinProject", "when": "false" },
+        { "command": "claudeCC.openSession", "when": "false" },
+        { "command": "claudeCC.openSessionNewPane", "when": "false" },
+        { "command": "claudeCC.forkSession", "when": "false" },
+        { "command": "claudeCC.previewSession", "when": "false" },
+        { "command": "claudeCC.copyResume", "when": "false" },
+        { "command": "claudeCC.addToWorkspace", "when": "false" },
+        { "command": "claudeCC.revealProject", "when": "false" },
+        { "command": "claudeCC.focusBoardItem", "when": "false" },
+        { "command": "claudeCC.closeBoardItem", "when": "false" }
+      ]
+    },
+    "keybindings": [
+      { "command": "claudeCC.focusPane", "key": "ctrl+alt+k", "mac": "cmd+alt+k" },
+      { "command": "claudeCC.maximize", "key": "ctrl+alt+m", "mac": "cmd+alt+m" },
+      { "command": "claudeCC.broadcast", "key": "ctrl+alt+b", "mac": "cmd+alt+b" }
+    ],
+    "configuration": {
+      "title": "Claude Command Center",
+      "properties": {
+        "claudeCC.claudeCommand": {
+          "type": "string",
+          "default": "claude",
+          "description": "Command used to start Claude Code. Use a full path if 'claude' is not on PATH."
+        },
+        "claudeCC.extraArgs": {
+          "type": "string",
+          "default": "",
+          "description": "Extra arguments appended to every claude launch, e.g. --model opus or --permission-mode acceptEdits."
+        },
+        "claudeCC.claudeDataDir": {
+          "type": "string",
+          "default": "",
+          "description": "Claude data folder holding projects/*.jsonl. Empty = $CLAUDE_CONFIG_DIR or ~/.claude."
+        },
+        "claudeCC.showDiscoveredProjects": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also list unpinned project folders found in your Claude history."
+        },
+        "claudeCC.sessionsPerProject": {
+          "type": "number",
+          "default": 15,
+          "description": "Max sessions listed per project (newest first)."
+        },
+        "claudeCC.restoreOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reopen the board (same sessions, same layout) when VS Code starts."
+        },
+        "claudeCC.notifyWhenDone": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification when a background session finishes its turn or appears to wait for approval."
+        },
+        "claudeCC.colorTerminals": {
+          "type": "boolean",
+          "default": true,
+          "description": "Give each project's panes its own tab color."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository"
+  }
+}
