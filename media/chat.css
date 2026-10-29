@@ -114,3 +114,23 @@ footer { border-top: 1px solid var(--border); padding: 4px 10px 8px; position: r
 .pitem.sel { background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground)); }
 .plabel { font-family: var(--vscode-editor-font-family); }
 .phint, .pitem .pdesc { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+
+#controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+#controls select { max-width: 130px; font-size: .9em; padding: 1px 2px; }
+#controls button { font-size: .9em; }
+button.toggle.on { color: var(--vscode-button-foreground); background: var(--accent); }
+button.meter { font-family: var(--vscode-editor-font-family); font-size: .85em; padding: 2px 6px; }
+button.meter.warm { color: var(--vscode-charts-orange, #d29922); }
+button.meter.hot { color: var(--vscode-errorForeground); }
+#menu {
+  position: absolute; bottom: 100%; right: 10px; min-width: 260px; max-width: calc(100% - 20px); max-height: 60vh; overflow-y: auto; z-index: 6;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background)); color: var(--vscode-menu-foreground, inherit);
+  border: 1px solid var(--vscode-menu-border, var(--border)); border-radius: 6px; padding: 4px 0; box-shadow: 0 4px 16px rgba(0, 0, 0, .3);
+}
+.mitem { display: flex; gap: 10px; padding: 4px 12px; cursor: pointer; white-space: nowrap; }
+.mitem:hover { background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground)); color: var(--vscode-menu-selectionForeground, inherit); }
+.mitem.static { cursor: default; }
+.mitem.static:hover { background: none; color: inherit; }
+.mlabel { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.mhint { color: var(--dim); font-size: .9em; }
+.msep { border-top: 1px solid var(--border); margin: 4px 0; }

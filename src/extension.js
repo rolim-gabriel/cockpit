@@ -195,6 +195,7 @@ function activate(context) {
     if (pick) await board.setLayout(pick.n);
   });
   reg('claudeCC.tidy', () => board.tidy());
+  reg('claudeCC.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', 'claudeCC'));
   reg('claudeCC.restoreBoard', () => board.restore());
   reg('claudeCC.closeBoard', async () => {
     const ok = await vscode.window.showWarningMessage('Close all Claude sessions on the board? Conversations are saved and can be resumed.', { modal: true }, 'Close all');

@@ -93,6 +93,7 @@ class Board {
     const columns = this.columnsByName();
     const items = [...this.open.values()].map(e => ({
       project: e.project, sessionId: e.sessionId, title: e.title, kind: e.kind, column: columns.get(e.name) || 99,
+      options: e.options,
     })).sort((a, b) => a.column - b.column);
     this.store.update('board', { items });
     this._onDidChange.fire();
@@ -120,7 +121,7 @@ class Board {
     await applyGrid(cols.length);
     for (const item of todo) {
       await this.openSession(item.project, item.sessionId, {
-        column: cols.indexOf(item.column) + 1, title: item.title, quiet: true, kind: item.kind || 'terminal',
+        column: cols.indexOf(item.column) + 1, title: item.title, quiet: true, kind: item.kind || 'terminal', options: item.options,
       });
     }
   }
@@ -130,7 +131,7 @@ class Board {
   /**
    * @param {string} project folder the session runs in (its cwd)
    * @param {string|undefined} sessionId existing session to resume; undefined = new session
-   * @param {{column?: number, mode?: 'board'|'tab', fork?: boolean, title?: string, quiet?: boolean, kind?: 'chat'|'terminal', startDelay?: number}} opts
+   * @param {{column?: number, mode?: 'board'|'tab', fork?: boolean, title?: string, quiet?: boolean, kind?: 'chat'|'terminal', startDelay?: number, options?: object}} opts
    */
   async openSession(project, sessionId, opts = {}) {
     if (sessionId && !opts.fork && this.open.has(sessionId)) {
@@ -144,14 +145,16 @@ class Board {
     const name = this.uniqueName(`${path.basename(project)} · ${short(title)}`);
     const file = sessions.sessionFile(project, id);
 
-    const entry = { kind, view: undefined, name, project, sessionId: id, title, file, state: 'idle', lastChange: Date.now(), size: 0 };
+    const entry = { kind, view: undefined, name, project, sessionId: id, title, file, state: 'idle', lastChange: Date.now(), size: 0, options: opts.options };
     if (kind === 'chat') {
       const panel = new ChatPanel(this.context, {
         project, sessionId: id, resume: !!sessionId && !opts.fork, fork: opts.fork ? sessionId : undefined, title, name,
-        column, preserveFocus: !!opts.quiet, startDelay: opts.startDelay || 0, transcript: opts.fork ? sessions.sessionFile(project, sessionId) : file,
+        column, preserveFocus: !!opts.quiet, startDelay: opts.startDelay || 0, options: opts.options, transcript: opts.fork ? sessions.sessionFile(project, sessionId) : file,
       });
       panel.onState(s => this.setState(entry, s));
       panel.onDidDispose(() => this.handleClosed(entry, false));
+      panel.onOptions(o => { entry.options = { ...o }; this.scheduleSave(); });
+      panel.onRename(t => { entry.title = t; this.scheduleSave(); });
       entry.view = panel;
     } else {
       entry.view = this.createTerminal(project, sessionId, id, name, column, opts);
@@ -204,7 +207,7 @@ class Board {
     // Open the new view first so the pane is not closed as empty, but launch Claude
     // only after the old process has released the session.
     this.open.delete(sessionId);
-    await this.openSession(e.project, sessionId, { column, title: e.title, kind, startDelay: 1500 });
+    await this.openSession(e.project, sessionId, { column, title: e.title, kind, startDelay: 1500, options: e.options });
     e.view.dispose();
   }
 

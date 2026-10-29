@@ -13,7 +13,8 @@ class ChatPanel {
   /**
    * @param {vscode.ExtensionContext} context
    * @param {{project: string, sessionId: string, resume: boolean, fork?: string, title: string, name: string,
-   *          column: vscode.ViewColumn, preserveFocus: boolean, transcript: string}} o
+   *          column: vscode.ViewColumn, preserveFocus: boolean, transcript: string, startDelay?: number,
+   *          options?: {model?: string, permissionMode?: string, effort?: string, fast?: boolean}}} o
    */
   constructor(context, o) {
     this.context = context;
@@ -23,6 +24,10 @@ class ChatPanel {
     this.onState = this._onState.event; // 'working' | 'waiting' | 'idle'
     this._onDispose = new vscode.EventEmitter();
     this.onDidDispose = this._onDispose.event;
+    this._onOptions = new vscode.EventEmitter();
+    this.onOptions = this._onOptions.event; // per-pane model/mode/effort/fast changed
+    this._onRename = new vscode.EventEmitter();
+    this.onRename = this._onRename.event;
 
     const media = vscode.Uri.joinPath(context.extensionUri, 'media');
     this.panel = vscode.window.createWebviewPanel('claudeCC.chat', o.name,
@@ -31,11 +36,16 @@ class ChatPanel {
     this.panel.iconPath = vscode.Uri.joinPath(media, 'activity.svg');
     this.panel.webview.html = this.html(media);
 
+    // Each pane has its own options; they start from the saved pane state or the global defaults.
     const cfg = vscode.workspace.getConfiguration('claudeCC');
-    this.engine = new ChatEngine({
-      cwd: o.project, sessionId: o.sessionId, resume: o.resume, fork: o.fork,
-      model: cfg.get('chatModel') || undefined, permissionMode: cfg.get('chatPermissionMode') || undefined,
-    });
+    const saved = o.options || {};
+    this.options = {
+      model: saved.model || cfg.get('chatModel') || undefined,
+      permissionMode: saved.permissionMode || cfg.get('chatPermissionMode') || undefined,
+      effort: saved.effort || cfg.get('chatEffort') || undefined,
+      fast: saved.fast || false,
+    };
+    this.engine = new ChatEngine({ cwd: o.project, sessionId: o.sessionId, resume: o.resume, fork: o.fork, ...this.options });
     this.wireEngine();
 
     this.panel.webview.onDidReceiveMessage(m => this.onMessage(m));
@@ -67,10 +77,14 @@ class ChatPanel {
     e.on('busy', b => { this.post({ type: 'busy', busy: b }); this._onState.fire(b ? 'working' : 'idle'); });
     e.on('permission', (id, req) => { this.post({ type: 'permission', id, req }); this._onState.fire('waiting'); });
     e.on('permissionCancelled', id => { this.post({ type: 'permissionGone', id }); this._onState.fire(e.busy ? 'working' : 'idle'); });
-    e.on('result', r => this.post({
-      type: 'result', isError: !!r.is_error, subtype: r.subtype, durationMs: r.duration_ms,
-      usage: r.usage, text: r.is_error ? (r.result || (r.errors || []).join('\n')) : undefined,
-    }));
+    e.on('result', r => {
+      this.post({
+        type: 'result', isError: !!r.is_error, subtype: r.subtype, durationMs: r.duration_ms,
+        usage: r.usage, text: r.is_error ? (r.result || (r.errors || []).join('\n')) : undefined,
+      });
+      this.postContext();
+    });
+    e.on('info', () => this.postContext());
     e.on('error', text => this.post({ type: 'error', text }));
     e.on('exit', (code, stderr) => {
       this.post({ type: 'exited', code, stderr: code ? stderr : '' });
@@ -83,7 +97,7 @@ class ChatPanel {
     switch (m.type) {
       case 'ready': {
         const h = this.o.resume || this.o.fork ? loadHistory(this.o.transcript) : { items: [], truncated: false };
-        this.post({ type: 'hello', project: this.o.project, projectName: path.basename(this.o.project), title: this.o.title, ...h });
+        this.post({ type: 'hello', project: this.o.project, projectName: path.basename(this.o.project), title: this.o.title, options: this.options, ...h });
         if (this.o.startDelay) setTimeout(() => !this.disposed && e.start(), this.o.startDelay);
         else e.start();
         break;
@@ -99,10 +113,50 @@ class ChatPanel {
         this._onState.fire(e.permissions.size ? 'waiting' : 'working');
         break;
       case 'setModel':
-        try { await e.setModel(m.model); } catch (err) { this.post({ type: 'error', text: 'Model change failed: ' + err.message }); }
+        await this.option('model', m.model === 'default' ? undefined : m.model, () => e.setModel(m.model));
+        this.postContext();
         break;
       case 'setMode':
-        try { await e.setPermissionMode(m.mode); } catch (err) { this.post({ type: 'error', text: 'Mode change failed: ' + err.message }); }
+        await this.option('permissionMode', m.mode, () => e.setPermissionMode(m.mode));
+        break;
+      case 'setEffort':
+        await this.option('effort', m.effort || undefined, () => e.setEffort(m.effort));
+        break;
+      case 'setFast':
+        await this.option('fast', !!m.on, () => e.setFast(m.on));
+        break;
+      case 'mcp':
+        try { this.post({ type: 'mcp', servers: await e.mcpStatus() }); } catch (err) { this.post({ type: 'error', text: 'MCP status failed: ' + err.message }); }
+        break;
+      case 'mcpToggle':
+        try { await e.mcpToggle(m.name, m.enabled); this.post({ type: 'mcp', servers: await e.mcpStatus() }); } catch (err) { this.post({ type: 'error', text: err.message }); }
+        break;
+      case 'mcpReconnect':
+        try { await e.mcpReconnect(m.name); this.post({ type: 'mcp', servers: await e.mcpStatus() }); } catch (err) { this.post({ type: 'error', text: err.message }); }
+        break;
+      case 'remoteControl':
+        try {
+          const r = await e.remoteControl(m.enabled);
+          const url = Object.values(r || {}).find(v => typeof v === 'string' && /^https?:/.test(v));
+          this.post({ type: 'remoteControl', enabled: m.enabled, url });
+        } catch (err) { this.post({ type: 'remoteControl', enabled: false, error: err.message }); }
+        break;
+      case 'rename': {
+        const title = await vscode.window.showInputBox({ prompt: 'Rename this chat', value: this.o.title });
+        if (!title) break;
+        try { await e.rename(title); } catch { /* older CLI: title still updates locally */ }
+        this.setTitle(title);
+        this._onRename.fire(title);
+        break;
+      }
+      case 'compact':
+        this.sendExternal('/compact' + (m.instructions ? ' ' + m.instructions : ''));
+        break;
+      case 'context':
+        this.postContext(true);
+        break;
+      case 'settings':
+        vscode.commands.executeCommand('workbench.action.openSettings', 'claudeCC');
         break;
       case 'restart':
         e.start();
@@ -119,6 +173,26 @@ class ChatPanel {
         this.post({ type: 'files', q: m.q, list: this.searchFiles(m.q) });
         break;
     }
+  }
+
+  async option(key, value, apply) {
+    try {
+      await apply();
+      this.options[key] = value;
+      this._onOptions.fire(this.options);
+      this.post({ type: 'options', options: this.options });
+    } catch (err) {
+      this.post({ type: 'error', text: `Could not change ${key}: ${err.message}` });
+    }
+  }
+
+  async postContext(detail) {
+    if (!this.engine.proc) return;
+    try {
+      const u = await this.engine.contextUsage();
+      this.post({ type: 'context', percentage: u.percentage, total: u.totalTokens, max: u.maxTokens, model: u.model,
+        categories: detail ? (u.categories || []).filter(c => c.tokens > 0) : undefined });
+    } catch { /* older CLI without context usage */ }
   }
 
   /** Relative paths in the project matching a query, for @-mentions. */
@@ -163,9 +237,6 @@ class ChatPanel {
 <header id="bar">
   <span id="dot" class="dot idle" title="ready"></span>
   <span id="title"></span>
-  <span class="spacer"></span>
-  <select id="mode" title="Permission mode (Shift+Tab cycles)"></select>
-  <select id="model" title="Model"></select>
   <button id="toTerminal" class="icon" title="Switch this session to the terminal (CLI) view">&gt;_</button>
 </header>
 <main id="log"></main>
@@ -174,10 +245,20 @@ class ChatPanel {
   <div id="statusline"><span id="status"></span><span class="spacer"></span><span id="usage"></span></div>
   <div id="attachments"></div>
   <div id="popup" hidden></div>
+  <div id="menu" hidden></div>
   <div id="composer">
     <textarea id="input" rows="1" placeholder="Message Claude  (/ commands, @ files, paste images)" title="Enter to send, Shift+Enter for a new line, Esc to stop, Shift+Tab to change mode"></textarea>
     <button id="send" title="Send (Enter)">Send</button>
     <button id="stop" title="Stop (Esc)" hidden>Stop</button>
+  </div>
+  <div id="controls">
+    <select id="mode" title="Permission mode for this chat (Shift+Tab cycles)"></select>
+    <select id="model" title="Model for this chat"></select>
+    <select id="effort" title="Effort / thinking level for this chat" hidden></select>
+    <button id="fast" class="toggle" title="Fast mode for this chat" hidden>Fast</button>
+    <span class="spacer"></span>
+    <button id="ctx" class="meter" title="Context used by this chat. Click for details.">ctx</button>
+    <button id="more" class="icon" title="More options for this chat">&#8943;</button>
   </div>
 </footer>
 <script nonce="${nonce}" src="${u('marked.umd.js')}"></script>

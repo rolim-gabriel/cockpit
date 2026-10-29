@@ -53,6 +53,19 @@ exports.run = async () => {
   await sleep(1500);
   assert.strictEqual(vscode.window.tabGroups.all.length, 3, 'three panes');
 
+  // Per-pane options: different effort / model in each chat, applied to that chat's CLI only.
+  const settingsOf = e => e.view.engine.request({ subtype: 'get_settings' });
+  await entry.view.onMessage({ type: 'setEffort', effort: 'low' });
+  await fresh.view.onMessage({ type: 'setModel', model: 'sonnet' });
+  const sa = await settingsOf(entry), sb = await settingsOf(fresh);
+  assert.strictEqual(sa.applied.effort, 'low', 'pane A effort low');
+  assert.ok(/haiku/.test(sa.applied.model), 'pane A still haiku: ' + sa.applied.model);
+  assert.ok(/sonnet/.test(sb.applied.model), 'pane B now sonnet: ' + sb.applied.model);
+  assert.notStrictEqual(sb.applied.effort, 'low', 'pane B effort unaffected');
+  assert.ok(posted.some(m => m.type === 'context' && m.percentage >= 0), 'context meter updated');
+  await entry.view.onMessage({ type: 'mcp' });
+  await until(() => posted.find(m => m.type === 'mcp'), 10000, 'mcp list');
+
   // Switch the first chat to the terminal view in the same pane, then back.
   const col = board.columnsByName().get(entry.name);
   await board.switchView(sid);
@@ -68,6 +81,9 @@ exports.run = async () => {
   board.save();
   const saved = board.store.get('board');
   assert.deepStrictEqual(saved.items.map(i => i.kind).sort(), ['chat', 'chat', 'terminal'], 'kinds persisted');
+  const opt = id => saved.items.find(i => i.sessionId === id).options || {};
+  assert.strictEqual(opt(sid).effort, 'low', 'pane A options persisted (survived terminal round trip)');
+  assert.strictEqual(opt(fresh.sessionId).model, 'sonnet', 'pane B options persisted');
 
   if (process.env.CCC_SHOT) {
     // Ask the restored chat one more question so the screenshot shows a live exchange.

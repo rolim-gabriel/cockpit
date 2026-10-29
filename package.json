@@ -2,7 +2,7 @@
   "name": "claude-command-center",
   "displayName": "Claude Command Center",
   "description": "Run many Claude Code sessions, one per project folder, side by side in a resizable grid inside one VS Code window. Each pane can be a chat view or the CLI terminal, and existing conversations resume with full history.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -218,6 +218,12 @@
         "command": "claudeCC.openInOfficial",
         "title": "Open in Official Claude Code Panel",
         "category": "Claude CC"
+      },
+      {
+        "command": "claudeCC.openSettings",
+        "title": "Settings",
+        "category": "Claude CC",
+        "icon": "$(gear)"
       }
     ],
     "menus": {
@@ -261,6 +267,16 @@
           "command": "claudeCC.closeBoard",
           "when": "view == claudeCC.board",
           "group": "navigation@5"
+        },
+        {
+          "command": "claudeCC.openSettings",
+          "when": "view == claudeCC.board",
+          "group": "navigation@9"
+        },
+        {
+          "command": "claudeCC.openSettings",
+          "when": "view == claudeCC.projects",
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [
@@ -474,12 +490,12 @@
             "Terminal: the full Claude Code CLI interface"
           ],
           "default": "chat",
-          "description": "How sessions open on the board. You can switch any pane later."
+          "description": "How sessions open on the board. Chat is the default; choose terminal to get the full Claude Code CLI instead. Any pane can be switched later with its >_ button."
         },
         "claudeCC.chatModel": {
           "type": "string",
           "default": "",
-          "description": "Model for new chat panes (e.g. opus, sonnet). Empty = your Claude Code default. Can be changed per pane."
+          "description": "Starting model for new chat panes (e.g. opus, sonnet, haiku). Empty = your Claude Code default. Each pane can then change its own model."
         },
         "claudeCC.chatPermissionMode": {
           "type": "string",
@@ -491,7 +507,20 @@
             "auto"
           ],
           "default": "",
-          "description": "Permission mode chat panes start in. Empty = your Claude Code default."
+          "description": "Starting permission mode for new chat panes. Empty = your Claude Code default. Each pane can then change its own mode."
+        },
+        "claudeCC.chatEffort": {
+          "type": "string",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "",
+          "description": "Starting effort level for new chat panes. Empty = the model's default. Each pane can then change its own effort."
         },
         "claudeCC.claudeCommand": {
           "type": "string",

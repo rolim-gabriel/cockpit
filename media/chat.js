@@ -12,6 +12,7 @@
   const S = {
     commands: [], models: [], mode: 'default', busy: false, tools: new Map(), stream: null, streamText: '',
     images: [], popupItems: [], popupIndex: 0, popupKind: null, startedAt: 0, project: '',
+    opts: {}, rc: false, ctx: null,
   };
   const MODES = [
     ['default', 'Ask before edits'], ['acceptEdits', 'Edit automatically'], ['plan', 'Plan mode'], ['auto', 'Auto mode'],
@@ -220,6 +221,20 @@
       if (match) sel.value = match.value;
       else { const o = el('option', null, current); o.value = current; sel.appendChild(o); sel.value = current; }
     }
+    fillModelOptions();
+  }
+  // Effort levels and fast mode depend on the selected model.
+  function fillModelOptions() {
+    const m = S.models.find(x => x.value === $('model').value) || {};
+    const eff = $('effort');
+    const levels = m.supportsEffort ? (m.supportedEffortLevels || ['low', 'medium', 'high']) : [];
+    eff.hidden = !levels.length;
+    eff.innerHTML = '';
+    const def = el('option', null, 'Effort: default'); def.value = ''; eff.appendChild(def);
+    for (const l of levels) { const o = el('option', null, 'Effort: ' + l); o.value = l; eff.appendChild(o); }
+    eff.value = levels.includes(S.opts.effort) ? S.opts.effort : '';
+    $('fast').hidden = !m.supportsFastMode;
+    $('fast').classList.toggle('on', !!S.opts.fast && !!m.supportsFastMode);
   }
   function fillModes(current, autoAvailable) {
     const sel = $('mode');
@@ -230,8 +245,57 @@
     }
     if (current) { S.mode = current; sel.value = current; }
   }
-  $('model').onchange = e => vscode.postMessage({ type: 'setModel', model: e.target.value });
-  $('mode').onchange = e => { S.mode = e.target.value; vscode.postMessage({ type: 'setMode', mode: S.mode }); };
+  $('model').onchange = e => { S.opts.model = e.target.value; fillModelOptions(); vscode.postMessage({ type: 'setModel', model: e.target.value }); };
+  $('effort').onchange = e => { S.opts.effort = e.target.value; vscode.postMessage({ type: 'setEffort', effort: e.target.value }); };
+  $('fast').onclick = () => { S.opts.fast = !S.opts.fast; $('fast').classList.toggle('on', S.opts.fast); vscode.postMessage({ type: 'setFast', on: S.opts.fast }); };
+  $('ctx').onclick = () => { openMenu([{ label: 'Loading context usage...' }]); S.menuKind = 'context'; vscode.postMessage({ type: 'context' }); };
+  $('more').onclick = e => { e.stopPropagation(); if (!menu.hidden) return closeMenu(); mainMenu(); };
+
+  // ---- per-chat options menu ------------------------------------------------
+  const menu = $('menu');
+  function openMenu(items) {
+    menu.innerHTML = '';
+    for (const it of items) {
+      if (it.sep) { menu.appendChild(el('div', 'msep')); continue; }
+      const row = el('div', 'mitem' + (it.action ? '' : ' static'));
+      row.appendChild(el('span', 'mlabel', it.label));
+      if (it.hint) row.appendChild(el('span', 'mhint', it.hint));
+      if (it.action) row.onclick = ev => { ev.stopPropagation(); it.action(); };
+      menu.appendChild(row);
+    }
+    menu.hidden = false;
+  }
+  function closeMenu() { menu.hidden = true; S.menuKind = null; }
+  document.addEventListener('click', ev => { if (!menu.contains(ev.target)) closeMenu(); });
+  function mainMenu() {
+    S.menuKind = 'main';
+    openMenu([
+      { label: 'Rename chat...', action: () => { closeMenu(); vscode.postMessage({ type: 'rename' }); } },
+      { label: 'Compact conversation', hint: '/compact', action: () => { closeMenu(); vscode.postMessage({ type: 'compact' }); } },
+      { label: 'Context usage', hint: S.ctx ? S.ctx + '%' : '', action: () => $('ctx').onclick() },
+      { label: 'MCP servers...', action: () => { openMenu([{ label: 'Loading MCP servers...' }]); S.menuKind = 'mcp'; vscode.postMessage({ type: 'mcp' }); } },
+      { label: S.rc ? 'Remote Control: on (turn off)' : 'Remote Control: turn on', hint: 'continue from phone / claude.ai',
+        action: () => { closeMenu(); vscode.postMessage({ type: 'remoteControl', enabled: !S.rc }); } },
+      { sep: true },
+      { label: 'Switch to terminal (CLI) view', hint: '>_', action: () => { closeMenu(); vscode.postMessage({ type: 'switchView' }); } },
+      { label: 'Command Center settings', action: () => { closeMenu(); vscode.postMessage({ type: 'settings' }); } },
+    ]);
+  }
+  function mcpMenu(servers) {
+    if (!servers.length) return openMenu([{ label: 'No MCP servers configured for this project.' }]);
+    openMenu(servers.map(s => ({
+      label: `${s.status === 'connected' ? '\u25CF' : '\u25CB'} ${s.name}`,
+      hint: s.status === 'disabled' ? 'disabled - click to enable' : s.status === 'failed' ? 'failed - click to reconnect' : `${s.status} - click to disable`,
+      action: () => vscode.postMessage(s.status === 'failed' ? { type: 'mcpReconnect', name: s.name } : { type: 'mcpToggle', name: s.name, enabled: s.status === 'disabled' }),
+    })));
+  }
+  function contextMenu(m) {
+    const k = n => n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+    openMenu([{ label: `${m.percentage}% used: ${k(m.total)} of ${k(m.max)} tokens`, hint: m.model || '' }, { sep: true },
+      ...(m.categories || []).map(c => ({ label: c.name, hint: k(c.tokens) })), { sep: true },
+      { label: 'Compact now', hint: '/compact', action: () => { closeMenu(); vscode.postMessage({ type: 'compact' }); } }]);
+  }
+  $('mode').onchange = e => { S.mode = S.opts.permissionMode = e.target.value; vscode.postMessage({ type: 'setMode', mode: S.mode }); };
   $('toTerminal').onclick = () => vscode.postMessage({ type: 'switchView' });
 
   function setStatus(text) { $('status').textContent = text || ''; }
@@ -269,6 +333,7 @@
   $('stop').onclick = () => vscode.postMessage({ type: 'interrupt' });
 
   input.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !menu.hidden) { closeMenu(); return; }
     if (!popup.hidden) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); movePopup(e.key === 'ArrowDown' ? 1 : -1); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickPopup(S.popupIndex); return; }
@@ -357,6 +422,7 @@
     switch (m.type) {
       case 'hello':
         S.project = m.project;
+        S.opts = m.options || {};
         $('title').textContent = `${m.projectName}: ${m.title}`;
         $('title').title = m.project;
         if (m.truncated) add(el('div', 'notice', 'Earlier messages are hidden here, but Claude still has them in context.'));
@@ -369,11 +435,11 @@
       case 'info':
         S.commands = m.commands;
         S.models = m.models;
-        fillModels(m.models, $('model').value || 'default');
-        fillModes(m.permissionMode || S.mode, m.models.some(x => x.supportsAutoMode));
+        fillModels(m.models, S.opts.model || 'default');
+        fillModes(S.opts.permissionMode || m.permissionMode || S.mode, m.models.some(x => x.supportsAutoMode));
         break;
       case 'init':
-        if (S.models.length) fillModels(S.models, m.model);
+        if (S.models.length && !S.opts.model) fillModels(S.models, m.model);
         if (m.permissionMode) { S.mode = m.permissionMode; $('mode').value = m.permissionMode; }
         break;
       case 'external': userBubble(m.text, 0); toBottom(true); setBusy(true); break;
@@ -386,12 +452,34 @@
       case 'result': {
         if (S.stream && S.streamText) { assistantBubble(S.streamText, S.stream); S.stream = null; }
         if (m.isError && m.text) add(el('div', 'notice err', m.text));
-        const u = m.usage || {};
-        const ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-        $('usage').textContent = `${Math.round((m.durationMs || 0) / 100) / 10}s · context ${Math.round(ctx / 1000)}k tokens`;
+        $('usage').textContent = `last turn ${Math.round((m.durationMs || 0) / 100) / 10}s`;
         setBusy(false);
         break;
       }
+      case 'options':
+        S.opts = { ...m.options };
+        if (S.models.length) fillModels(S.models, S.opts.model || 'default');
+        if (S.opts.permissionMode) { S.mode = S.opts.permissionMode; $('mode').value = S.mode; }
+        break;
+      case 'context': {
+        S.ctx = m.percentage;
+        const c = $('ctx');
+        c.textContent = m.percentage + '%';
+        c.className = 'meter' + (m.percentage >= 80 ? ' hot' : m.percentage >= 60 ? ' warm' : '');
+        c.title = `Context used by this chat: ${m.total} of ${m.max} tokens. Click for details.`;
+        if (m.categories && S.menuKind === 'context') contextMenu(m);
+        break;
+      }
+      case 'mcp': if (S.menuKind === 'mcp') mcpMenu(m.servers); break;
+      case 'remoteControl':
+        S.rc = !!m.enabled && !m.error;
+        if (m.error) add(el('div', 'notice err', 'Remote Control: ' + m.error));
+        else {
+          const n = el('div', 'notice', m.enabled ? 'Remote Control is on: continue this chat from claude.ai/code or the Claude app. ' : 'Remote Control is off.');
+          if (m.url) { const a = el('a', null, m.url); a.href = m.url; n.appendChild(a); }
+          add(n);
+        }
+        break;
       case 'files': if (S.atQuery === m.q) showPopup('file', m.list.map(f => ({ label: f, value: f }))); break;
       case 'error': add(el('div', 'notice err', m.text)); setBusy(false); break;
       case 'exited': {

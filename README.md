@@ -5,7 +5,13 @@ One VS Code window, many Claude Code sessions. Each session runs in its own proj
 It resumes your **existing** conversations with their full history.
 
 Each pane is either a **chat view** (the default) or the **terminal (CLI)**. You can switch any pane with
-the `>_` button or the swap icon in the Board view.
+the `>_` button or the swap icon in the Board view. To make the CLI the default, set `claudeCC.defaultView` to
+`terminal` (the gear icon in the sidebar opens these settings).
+
+Every chat pane has its own control bar under the prompt box, and its settings apply only to that chat:
+permission mode, model, effort level, fast mode (models that support it), and a context meter. The `...` menu adds
+rename, compact, context breakdown, MCP servers (enable, disable, reconnect), Remote Control on/off, switch to
+terminal, and settings. These choices are saved with the board and restored.
 
 ![Chat panes](media/screenshot-chat.png)
 
@@ -50,7 +56,8 @@ multi-root workspace stay separate, and the board is saved for that workspace.
 |---|---|---|
 | Layout | Bubbles, prompt box at the bottom | Full Claude Code CLI UI |
 | History on resume | Rendered from the transcript (the latest 600 items; Claude still has everything in context) | The CLI reprints it |
-| Model, permission mode | Dropdowns in the header | `/model`, Shift+Tab |
+| Model, mode, effort, fast mode | Per-pane controls under the prompt box | `/model`, `/effort`, `/fast`, Shift+Tab |
+| Context, MCP, Remote Control | Context meter and the `...` menu | `/context`, `/mcp`, `/remote-control` |
 | Slash commands | `/` menu; commands that run as prompts work (`/compact`, custom commands, skills). Commands that open interactive pickers in the CLI (`/agents`, `/config`, `/resume`...) need the terminal view | All |
 | Tool approvals | Buttons | Keyboard |
 | Status for the board | Exact | Inferred from the transcript |
@@ -74,6 +81,7 @@ first.** Two programs writing to the same session at once can create a forked hi
 | `claudeCC.defaultView` | `chat` | `chat` or `terminal` for newly opened panes |
 | `claudeCC.chatModel` | | Model for new chat panes (`opus`, `sonnet`, ...); empty = your default |
 | `claudeCC.chatPermissionMode` | | Starting mode for chat panes (`default`, `acceptEdits`, `plan`, `auto`) |
+| `claudeCC.chatEffort` | | Starting effort for chat panes (`low` ... `max`) |
 | `claudeCC.claudeCommand` | `claude` | Path to the CLI if it is not on PATH |
 | `claudeCC.extraArgs` | | e.g. `--model opus` or `--permission-mode acceptEdits` |
 | `claudeCC.claudeDataDir` | `~/.claude` | Override where sessions are read from |
@@ -86,7 +94,7 @@ first.** Two programs writing to the same session at once can create a forked hi
 ## Install
 
 ```
-code --install-extension claude-command-center-0.2.0.vsix
+code --install-extension claude-command-center-0.3.0.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 
@@ -95,9 +103,9 @@ On Windows the default PowerShell terminal works as is.
 
 ## Limits
 
-- The chat view is our own UI on top of the CLI. Features that live only in the official panel (its Remote
-  Control button, its session list, inline diff review in the editor) are not in the chat view. Use the terminal
-  view (`/remote-control`, `/agents`...) or the official panel for the first folder when you need them.
+- The chat view is our own UI on top of the CLI. Features that live only in the official panel (its session list,
+  inline diff review in the editor) are not in the chat view. Commands that open interactive pickers in the CLI
+  (`/agents`, `/config`...) need the terminal view.
 - The terminal view's "waiting for approval" status is a guess: Claude is mid-turn and its transcript has not changed for 12 seconds.
   A long-running build looks the same.
 
@@ -113,5 +121,6 @@ xvfb-run -a node test/run-chat.js <dir with @vscode/test-electron> [shot.png] <V
 - `test/run.js` starts a real VS Code with a fake `claude`. It checks discovery, resuming in the right folder,
   growing the grid, tidy, persistence, status detection and restore.
 - `test/run-chat.js` uses the **real** CLI (a few cheap Haiku turns). It checks that a chat resumes a CLI conversation
-  with its history and context, streaming, a tool approval round trip, a new chat in another project, chat/terminal
-  switching in the same pane, and persistence.
+  with its history and context, streaming, a tool approval round trip, a new chat in another project, separate
+  model/effort per pane (checked against each CLI's applied settings), context meter, MCP list, chat/terminal
+  switching in the same pane, and persistence of kinds and per-pane options.

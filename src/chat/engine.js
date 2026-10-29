@@ -8,7 +8,7 @@ const vscode = require('vscode');
 
 class ChatEngine extends EventEmitter {
   /**
-   * @param {{cwd: string, sessionId: string, resume: boolean, fork?: string, model?: string, permissionMode?: string}} opts
+   * @param {{cwd: string, sessionId: string, resume: boolean, fork?: string, model?: string, permissionMode?: string, effort?: string, fast?: boolean}} opts
    */
   constructor(opts) {
     super();
@@ -34,6 +34,7 @@ class ChatEngine extends EventEmitter {
     else args.push('--session-id', this.sessionId);
     if (this.opts.model) args.push('--model', this.opts.model);
     if (this.opts.permissionMode) args.push('--permission-mode', this.opts.permissionMode);
+    if (this.opts.effort) args.push('--effort', this.opts.effort);
     const extra = (cfg.get('extraArgs') || '').trim();
     if (extra) args.push(...extra.split(/\s+/));
 
@@ -57,7 +58,11 @@ class ChatEngine extends EventEmitter {
       this.permissions.clear();
       this.emit('exit', code, this.stderr.trim());
     });
-    this.request({ subtype: 'initialize' }).then(info => { this.info = info; this.emit('info', info); }, () => {});
+    this.request({ subtype: 'initialize' }).then(info => {
+      this.info = info;
+      if (this.opts.fast) this.applySettings({ fastMode: true }).catch(() => {});
+      this.emit('info', info);
+    }, () => {});
   }
 
   write(obj) {
@@ -171,6 +176,28 @@ class ChatEngine extends EventEmitter {
     this.opts.permissionMode = mode;
     if (this.proc) return this.request({ subtype: 'set_permission_mode', mode });
   }
+
+  /** Session-only settings layer (same as CLI flags): effortLevel, fastMode... */
+  applySettings(settings) {
+    return this.request({ subtype: 'apply_flag_settings', settings });
+  }
+
+  setEffort(level) {
+    this.opts.effort = level || undefined;
+    if (this.proc) return this.applySettings({ effortLevel: level || null });
+  }
+
+  setFast(on) {
+    this.opts.fast = !!on;
+    if (this.proc) return this.applySettings({ fastMode: !!on });
+  }
+
+  contextUsage() { return this.request({ subtype: 'get_context_usage' }); }
+  mcpStatus() { return this.request({ subtype: 'mcp_status' }).then(r => r.mcpServers || []); }
+  mcpToggle(serverName, enabled) { return this.request({ subtype: 'mcp_toggle', serverName, enabled }); }
+  mcpReconnect(serverName) { return this.request({ subtype: 'mcp_reconnect', serverName }); }
+  remoteControl(enabled) { return this.request({ subtype: 'remote_control', enabled }); }
+  rename(title) { return this.request({ subtype: 'rename_session', title, source: 'host', session_id: this.sessionId }); }
 
   dispose() {
     this.removeAllListeners();
