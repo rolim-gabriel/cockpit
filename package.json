@@ -1,8 +1,8 @@
 {
   "name": "claude-command-center",
   "displayName": "Claude Command Center",
-  "description": "Run many Claude Code sessions, one per project folder, side by side in a resizable grid inside one VS Code window. Each pane can be a chat view or the CLI terminal, and existing conversations resume with full history.",
-  "version": "0.3.0",
+  "description": "Native Claude Code sessions for many projects side by side in one VS Code window: a resizable grid of official Claude Code chat panels and Claude Code CLI panes, each in its own project folder and resumed with its full history.",
+  "version": "0.4.0",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -41,7 +41,7 @@
         },
         {
           "id": "claudeCC.board",
-          "name": "Board (open panes)"
+          "name": "Board (CLI panes)"
         }
       ]
     },
@@ -94,7 +94,7 @@
       },
       {
         "command": "claudeCC.openSession",
-        "title": "Open in Board (default view)",
+        "title": "Open in Board",
         "category": "Claude CC",
         "icon": "$(terminal)"
       },
@@ -191,28 +191,10 @@
         "icon": "$(close)"
       },
       {
-        "command": "claudeCC.openAsChat",
-        "title": "Open as Chat",
-        "category": "Claude CC",
-        "icon": "$(comment-discussion)"
-      },
-      {
-        "command": "claudeCC.openAsTerminal",
-        "title": "Open as Terminal (CLI)",
-        "category": "Claude CC",
-        "icon": "$(terminal)"
-      },
-      {
         "command": "claudeCC.newTerminalSession",
-        "title": "New Claude Session (Terminal)",
+        "title": "New Claude Session (CLI)",
         "category": "Claude CC",
         "icon": "$(terminal)"
-      },
-      {
-        "command": "claudeCC.switchView",
-        "title": "Switch Chat / Terminal View",
-        "category": "Claude CC",
-        "icon": "$(arrow-swap)"
       },
       {
         "command": "claudeCC.openInOfficial",
@@ -224,6 +206,12 @@
         "title": "Settings",
         "category": "Claude CC",
         "icon": "$(gear)"
+      },
+      {
+        "command": "claudeCC.openInTerminal",
+        "title": "Open in Claude Code CLI (terminal)",
+        "category": "Claude CC",
+        "icon": "$(terminal)"
       }
     ],
     "menus": {
@@ -371,21 +359,6 @@
           "group": "inline@1"
         },
         {
-          "command": "claudeCC.switchView",
-          "when": "view == claudeCC.board && viewItem =~ /^boardItem/",
-          "group": "inline@0"
-        },
-        {
-          "command": "claudeCC.openAsChat",
-          "when": "view == claudeCC.projects && viewItem == session",
-          "group": "1_open@1a"
-        },
-        {
-          "command": "claudeCC.openAsTerminal",
-          "when": "view == claudeCC.projects && viewItem == session",
-          "group": "1_open@1b"
-        },
-        {
           "command": "claudeCC.openInOfficial",
           "when": "view == claudeCC.projects && viewItem == session",
           "group": "1_open@4"
@@ -394,6 +367,11 @@
           "command": "claudeCC.newTerminalSession",
           "when": "view == claudeCC.projects && viewItem =~ /^project/",
           "group": "1_open@1a"
+        },
+        {
+          "command": "claudeCC.openInTerminal",
+          "when": "view == claudeCC.projects && viewItem == session",
+          "group": "1_open@1b"
         }
       ],
       "commandPalette": [
@@ -442,19 +420,11 @@
           "when": "false"
         },
         {
-          "command": "claudeCC.openAsChat",
-          "when": "false"
-        },
-        {
-          "command": "claudeCC.openAsTerminal",
-          "when": "false"
-        },
-        {
           "command": "claudeCC.openInOfficial",
           "when": "false"
         },
         {
-          "command": "claudeCC.switchView",
+          "command": "claudeCC.openInTerminal",
           "when": "false"
         }
       ]
@@ -479,48 +449,10 @@
     "configuration": {
       "title": "Claude Command Center",
       "properties": {
-        "claudeCC.defaultView": {
-          "type": "string",
-          "enum": [
-            "chat",
-            "terminal"
-          ],
-          "enumDescriptions": [
-            "Chat view: message bubbles, prompt box at the bottom, model and mode pickers, / commands, @ files, approval buttons",
-            "Terminal: the full Claude Code CLI interface"
-          ],
-          "default": "chat",
-          "description": "How sessions open on the board. Chat is the default; choose terminal to get the full Claude Code CLI instead. Any pane can be switched later with its >_ button."
-        },
-        "claudeCC.chatModel": {
-          "type": "string",
-          "default": "",
-          "description": "Starting model for new chat panes (e.g. opus, sonnet, haiku). Empty = your Claude Code default. Each pane can then change its own model."
-        },
-        "claudeCC.chatPermissionMode": {
-          "type": "string",
-          "enum": [
-            "",
-            "default",
-            "acceptEdits",
-            "plan",
-            "auto"
-          ],
-          "default": "",
-          "description": "Starting permission mode for new chat panes. Empty = your Claude Code default. Each pane can then change its own mode."
-        },
-        "claudeCC.chatEffort": {
-          "type": "string",
-          "enum": [
-            "",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
-          "default": "",
-          "description": "Starting effort level for new chat panes. Empty = the model's default. Each pane can then change its own effort."
+        "claudeCC.preferOfficialPanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open chats of this window's first folder in the official Claude Code chat panel. (That panel only runs in the first folder; other projects always open in the Claude Code CLI.)"
         },
         "claudeCC.claudeCommand": {
           "type": "string",

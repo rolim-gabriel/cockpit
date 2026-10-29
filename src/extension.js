@@ -127,26 +127,22 @@ function activate(context) {
     await board.openSession(el.session.cwd, el.session.id, { title: el.session.title });
   });
   reg('claudeCC.openSessionNewPane', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, mode: 'tab' }));
-  reg('claudeCC.openAsChat', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, kind: 'chat' }));
-  reg('claudeCC.openAsTerminal', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, kind: 'terminal' }));
+  reg('claudeCC.openInTerminal', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, view: 'terminal' }));
   reg('claudeCC.newTerminalSession', async el => {
-    const p = projectOf(el) || await pickProject('Start a new Claude terminal session in...');
-    if (p) await board.openSession(p, undefined, { kind: 'terminal' });
+    const p = projectOf(el) || await pickProject('Start a new Claude CLI session in...');
+    if (p) await board.openSession(p, undefined, { view: 'terminal' });
   });
   reg('claudeCC.openInOfficial', async el => {
     if (!el) return;
-    // The official chat panel always runs in the window's first folder, so it can only host that project's chats.
-    const first = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
-    if (!first || sessions.pathKey(first.uri.fsPath) !== sessions.pathKey(el.session.cwd)) {
-      vscode.window.showWarningMessage(`The official Claude Code panel can only open chats of this window's first folder${first ? ` (${first.name})` : ''}. Use "Open as Chat" for other projects.`);
+    if (!board.canUseOfficial(el.session.cwd)) {
+      const first = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+      vscode.window.showWarningMessage(board.officialAvailable
+        ? `The official Claude Code chat panel only runs in this window's first folder${first ? ` (${first.name})` : ''}, so other projects open in the Claude Code CLI.`
+        : 'The official Claude Code extension is not installed or not active.');
       return;
     }
-    if (!vscode.extensions.getExtension('anthropic.claude-code')) {
-      vscode.window.showWarningMessage('The official Claude Code extension is not installed.');
-      return;
-    }
-    if (board.open.has(el.session.id)) board.open.get(el.session.id).view.dispose();
-    await vscode.commands.executeCommand('claude-vscode.editor.open', el.session.id, undefined, await board.nextFreeColumn());
+    if (board.open.has(el.session.id)) board.open.get(el.session.id).terminal.dispose();
+    await board.openSession(el.session.cwd, el.session.id, { view: 'official' });
   });
   reg('claudeCC.forkSession', el => el && board.openSession(el.session.cwd, el.session.id, { title: 'fork: ' + el.session.title, fork: true }));
   reg('claudeCC.previewSession', async el => {
@@ -174,16 +170,13 @@ function activate(context) {
       canPickMany: true, matchOnDescription: true, placeHolder: 'Pick the chats to put on the board (each gets its own pane)',
     });
     if (!picks || !picks.length) return;
-    const views = [{ label: '$(comment-discussion) Chat view', kind: 'chat' }, { label: '$(terminal) Terminal (CLI)', kind: 'terminal' }];
-    if (board.defaultKind() === 'terminal') views.reverse();
-    const view = await vscode.window.showQuickPick(views, { placeHolder: 'Open them as...' });
-    if (!view) return;
-    await board.setLayout(board.open.size + picks.length);
+    const used = vscode.window.tabGroups.all.filter(g => g.tabs.length).length;
+    await board.setLayout(used + picks.length);
     for (const p of picks) {
-      if (p.newIn) await board.openSession(p.newIn, undefined, { quiet: true, kind: view.kind });
-      else await board.openSession(p.session.cwd, p.session.id, { title: p.session.title, quiet: true, kind: view.kind });
+      if (p.newIn) await board.openSession(p.newIn, undefined, { quiet: true });
+      else await board.openSession(p.session.cwd, p.session.id, { title: p.session.title, quiet: true });
     }
-    if (board.open.size > picks.length) await board.tidy();
+
   });
   reg('claudeCC.layout', async () => {
     const n = board.open.size;
@@ -203,14 +196,10 @@ function activate(context) {
   });
   reg('claudeCC.focusPane', async () => {
     const pick = await openPicks('Jump to session', false);
-    if (pick) board.reveal(board.open.get(pick.id));
+    if (pick) board.open.get(pick.id).terminal.show(false);
   });
-  reg('claudeCC.focusBoardItem', id => { const e = board.open.get(id); if (e) board.reveal(e); });
-  reg('claudeCC.closeBoardItem', item => item && item.entry && item.entry.view.dispose());
-  reg('claudeCC.switchView', arg => {
-    const id = typeof arg === 'string' ? arg : arg && arg.entry && arg.entry.sessionId;
-    if (id) return board.switchView(id);
-  });
+  reg('claudeCC.focusBoardItem', id => { const e = board.open.get(id); if (e) e.terminal.show(false); });
+  reg('claudeCC.closeBoardItem', item => item && item.entry && item.entry.terminal.dispose());
   reg('claudeCC.maximize', () => vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup'));
   reg('claudeCC.broadcast', async () => {
     if (!board.open.size) return vscode.window.showInformationMessage('No sessions on the board.');
