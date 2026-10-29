@@ -1,84 +1,70 @@
 # Claude Command Center
 
-One VS Code window, many Claude Code sessions. Each session runs in its own project folder
-(projects are never merged). All of them sit side by side in a grid you can resize and rearrange.
-It resumes your **existing** conversations with their full history.
+One VS Code window, many **native** Claude Code sessions. Each session runs in its own project folder
+(projects are never merged). All of them sit side by side in a grid of panes that you can resize and rearrange.
+Your **existing** conversations resume with their full history.
 
-Each pane is either a **chat view** (the default) or the **terminal (CLI)**. You can switch any pane with
-the `>_` button or the swap icon in the Board view.
+This extension never draws Claude's interface itself. Every pane is Anthropic's own Claude Code:
 
-![Chat panes](media/screenshot-chat.png)
+- **Official Claude Code chat panel** for chats of the window's first folder.
+- **Claude Code CLI** (in a terminal pane) for every other project.
 
-It uses the normal `claude` CLI that you are already logged into, so usage comes out of your
-Claude subscription. Nothing is sent anywhere else and nothing in the official Claude Code
-extension is changed.
+The extension only finds your conversations, places them in panes, and launches them with their history. When
+Claude Code or its VS Code extension updates, the panes pick up the update automatically, with nothing to change here.
+
+## Why two kinds of pane
+
+VS Code's official Claude Code chat panel always runs in the window's **first folder**, and only finds chat
+history for that folder. It cannot be pointed at another project. So:
+
+| Project | Pane | History |
+|---|---|---|
+| The window's first folder | Official chat panel (bubbles, model picker, `/` menu, Remote Control...) | Loaded by the official extension |
+| Any other project | Claude Code CLI, started in that project's folder | `claude --resume <id>`: Claude gets the whole conversation back as context, and the CLI reprints it |
+
+Both are the same Claude Code agent with your subscription, settings, CLAUDE.md, MCP servers and hooks. Any chat
+can also be opened in the CLI (right-click a chat, then **Open in Claude Code CLI**).
 
 ## How it works
 
 | Need | How |
 |---|---|
-| Keep projects separate | Every pane runs `claude` with `cwd` set to that project's folder. No multi-root merge is needed. |
-| Chat view | A webview that drives your local `claude` CLI in its headless stream-json mode, the same protocol the official extension and the Agent SDK use. It gives you message bubbles, a prompt box at the bottom, model and permission-mode pickers, a `/` menu (built-in commands, your custom commands and skills), `@` file mentions, pasted images, Allow / Always allow / Deny buttons for tool approvals, plan approval, Claude's multiple-choice questions, live streaming, Stop (Esc) and Shift+Tab to change mode. |
-| Keep chat history | Claude Code (CLI **and** the official VS Code chat panel) saves every conversation in `~/.claude/projects/<folder>/<session-id>.jsonl`. The sidebar reads those files and opens a chat with `claude --resume <id>`, so you continue the same conversation. |
-| See everything at once | The sessions are terminals in the editor area, laid out as a grid of editor groups (2 side by side, 2x2 quadrants, 3x2, 3x3...). You resize by dragging the borders between panes and rearrange by dragging tabs. Maximize one pane with `Ctrl+Alt+M`, then press it again to go back. |
-| Know who needs you | The tree and status bar show each session as working (spinning), waiting (bell) or ready (check). A notification appears when a session in the background finishes or seems to be waiting for approval. |
-| Survive restarts | The board (which sessions are open and in which pane) is saved for each workspace and reopened on startup with `--resume`. |
+| Keep projects separate | Each CLI pane starts `claude` with its working folder set to that project. No multi-root merge is needed. |
+| Keep chat history | Claude Code (CLI **and** the official chat panel) saves every conversation in `~/.claude/projects/<folder>/<session-id>.jsonl`. The sidebar reads those files (read only) and lists every conversation by project. |
+| See everything at once | Panes are editor groups laid out as a grid (2 side by side, 2x2 quadrants, 3x2, 3x3...). Drag the borders between panes to resize them and drag tabs to rearrange. `Ctrl+Alt+M` maximizes a pane; press it again to go back. |
+| Know who needs you | CLI panes show working / waiting / ready in the Board view and status bar. A notification appears when a background session finishes or seems to wait for approval. (Official panels have their own indicators.) |
+| Survive restarts | The board's CLI panes are saved per workspace and reopened with `--resume`. Official chat tabs are restored by the official extension. |
 
 ## Using it
 
 1. Click the **Claude Command Center** icon in the activity bar.
-2. **Projects & Sessions** lists every folder that already has Claude conversations. Pin the ones
-   you use (pin icon) or add new folders (folder+ icon).
-3. Click a conversation to open it on the board. It goes into the next empty pane, and the grid grows
-   when every pane is full. You can also:
+2. **Projects & Sessions** lists every folder that has Claude conversations. Pin the ones you use (pin icon) or add folders (folder+ icon).
+3. Click a conversation to open it on the board. It goes into the next empty pane, and the grid grows when every pane is full. You can also:
    - `+` on a project: start a new chat in that folder
    - `▷` on a project: resume its most recent chat
-   - Right-click a chat: open it as a tab in the active pane, fork it, preview the transcript, copy its resume command
-4. **Open Sessions as Grid...** (layout icon): pick several chats or new sessions at once and get one pane for each.
-5. In the **Board** view: change the layout, **Tidy** (one session per pane), **Send prompt to several sessions**,
-   restore the last board, close all.
+   - Right-click a chat: open it in the CLI, open it as a tab in the current pane, fork it, preview the transcript, or copy its resume command
+4. **Open Sessions as Grid...** (layout icon): pick several chats or new sessions at once, one pane each.
+5. **Board** view: change the layout, **Tidy** (one tab per pane), **Send prompt to several CLI sessions**, restore the last board, close all.
 
 Shortcuts: `Ctrl+Alt+K` jump to a session, `Ctrl+Alt+M` maximize or restore the current pane, `Ctrl+Alt+B` send a prompt to several sessions.
 
-Tip: if you also want each project's files in the Explorer, right-click a project and choose
-**Add Folder to Workspace**, then save the workspace (File > Save Workspace As). Folders in a
-multi-root workspace stay separate, and the board is saved for that workspace.
+Tip: open the project you work in most as the window's first folder; its chats then get the official chat panel.
+To also see the other projects' files in the Explorer, right-click a project, choose **Add Folder to Workspace**, and save the
+workspace (File > Save Workspace As). Folders in a multi-root workspace stay separate.
 
-## Chat view vs terminal view
-
-| | Chat view | Terminal view |
-|---|---|---|
-| Layout | Bubbles, prompt box at the bottom | Full Claude Code CLI UI |
-| History on resume | Rendered from the transcript (the latest 600 items; Claude still has everything in context) | The CLI reprints it |
-| Model, permission mode | Dropdowns in the header | `/model`, Shift+Tab |
-| Slash commands | `/` menu; commands that run as prompts work (`/compact`, custom commands, skills). Commands that open interactive pickers in the CLI (`/agents`, `/config`, `/resume`...) need the terminal view | All |
-| Tool approvals | Buttons | Keyboard |
-| Status for the board | Exact | Inferred from the transcript |
-
-Both run the same agent with the same tools, settings, CLAUDE.md, MCP servers and hooks, and use your subscription login.
-
-**Official Claude Code panel:** VS Code allows one official panel per window, and that panel always runs in the
-window's *first* folder. So for that one project you can right-click a chat and choose **Open in Official Claude
-Code Panel** to get Anthropic's own UI in the grid. Other projects use the chat view or terminal view.
-
-## Bringing over chats from the official Claude Code chat panel
-
-Those chats are stored in the same place, so they show up in the list automatically (with a chat
-bubble icon). Opening one resumes it in the CLI with all of its history. **Close it in the chat panel
-first.** Two programs writing to the same session at once can create a forked history.
+**Do not keep the same conversation open in two places at once** (for example in a CLI pane and in the official
+panel). Two programs writing to one conversation can split its history into two branches.
 
 ## Settings
 
 | Setting | Default | |
 |---|---|---|
-| `claudeCC.defaultView` | `chat` | `chat` or `terminal` for newly opened panes |
-| `claudeCC.chatModel` | | Model for new chat panes (`opus`, `sonnet`, ...); empty = your default |
-| `claudeCC.chatPermissionMode` | | Starting mode for chat panes (`default`, `acceptEdits`, `plan`, `auto`) |
+| `claudeCC.preferOfficialPanel` | `true` | Open the first folder's chats in the official chat panel (otherwise in the CLI) |
 | `claudeCC.claudeCommand` | `claude` | Path to the CLI if it is not on PATH |
-| `claudeCC.extraArgs` | | e.g. `--model opus` or `--permission-mode acceptEdits` |
-| `claudeCC.claudeDataDir` | `~/.claude` | Override where sessions are read from |
+| `claudeCC.extraArgs` | | Extra CLI arguments, e.g. `--model opus` |
+| `claudeCC.claudeDataDir` | `~/.claude` | Override where conversations are read from |
 | `claudeCC.restoreOnStartup` | `true` | Reopen the board when VS Code starts |
-| `claudeCC.notifyWhenDone` | `true` | Notifications for finished or waiting sessions |
+| `claudeCC.notifyWhenDone` | `true` | Notifications for finished or waiting CLI sessions |
 | `claudeCC.showDiscoveredProjects` | `true` | List unpinned folders found in your history |
 | `claudeCC.sessionsPerProject` | `15` | Chats shown per project before "show older" |
 | `claudeCC.colorTerminals` | `true` | Each project gets its own tab color |
@@ -86,32 +72,25 @@ first.** Two programs writing to the same session at once can create a forked hi
 ## Install
 
 ```
-code --install-extension claude-command-center-0.2.0.vsix
+code --install-extension claude-command-center-0.4.0.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 
-Requirements: VS Code 1.90 or later, and Claude Code CLI installed and logged in (`claude` works in a terminal).
-On Windows the default PowerShell terminal works as is.
-
-## Limits
-
-- The chat view is our own UI on top of the CLI. Features that live only in the official panel (its Remote
-  Control button, its session list, inline diff review in the editor) are not in the chat view. Use the terminal
-  view (`/remote-control`, `/agents`...) or the official panel for the first folder when you need them.
-- The terminal view's "waiting for approval" status is a guess: Claude is mid-turn and its transcript has not changed for 12 seconds.
-  A long-running build looks the same.
+Requirements: VS Code 1.90 or later and the Claude Code CLI, installed and logged in (`claude` works in a terminal).
+The official Claude Code extension is optional; it is needed only for the official chat panel.
 
 ## Development
 
-No build step: plain JavaScript and no runtime dependencies. `media/marked.umd.js` (MIT) renders Markdown.
+No build step and no runtime dependencies: plain JavaScript.
 
 ```
-npm run package                       # builds the .vsix
-xvfb-run -a node test/run.js      <dir with @vscode/test-electron> [shot.png] <VS Code binary>
-xvfb-run -a node test/run-chat.js <dir with @vscode/test-electron> [shot.png] <VS Code binary>
+npm run package     # builds the .vsix
+xvfb-run -a node test/run.js <dir with @vscode/test-electron> [shot.png] <VS Code binary>
 ```
-- `test/run.js` starts a real VS Code with a fake `claude`. It checks discovery, resuming in the right folder,
-  growing the grid, tidy, persistence, status detection and restore.
-- `test/run-chat.js` uses the **real** CLI (a few cheap Haiku turns). It checks that a chat resumes a CLI conversation
-  with its history and context, streaming, a tool approval round trip, a new chat in another project, chat/terminal
-  switching in the same pane, and persistence.
+`test/run.js` starts a real VS Code with a fake `claude`. It checks:
+- discovery of conversations and projects
+- resuming each conversation in its own folder
+- growing the grid, tidy, persistence and restore
+- status detection
+- routing: chats of the first folder go to the official panel's own command, with the session id and target pane;
+  other projects go to the CLI; "Open in Claude Code CLI" bypasses the official panel
