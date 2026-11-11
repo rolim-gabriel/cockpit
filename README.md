@@ -4,26 +4,39 @@ One VS Code window, many **native** Claude Code sessions. Each session runs in i
 (projects are never merged). All of them sit side by side in a grid of panes that you can resize and rearrange.
 Your **existing** conversations resume with their full history.
 
-This extension never draws Claude's interface itself. Every pane is Anthropic's own Claude Code:
+This extension never draws Claude's interface itself. Every pane is Anthropic's own **official Claude Code chat
+panel** (or, if you prefer, Claude Code's own CLI). The extension only finds your conversations, places them in
+panes, and makes sure each one runs in its own project folder with its history. When Claude Code or its VS Code
+extension updates, the panes pick up the update automatically.
 
-- **Official Claude Code chat panel** for chats of the window's first folder.
-- **Claude Code CLI** (in a terminal pane) for every other project.
+![Three official Claude Code panels, three projects, one window](media/screenshot-official-grid.png)
 
-The extension only finds your conversations, places them in panes, and launches them with their history. When
-Claude Code or its VS Code extension updates, the panes pick up the update automatically, with nothing to change here.
+## Official panel everywhere (how it works)
 
-## Why two kinds of pane
+On its own, the official chat panel always runs in the window's **first folder** and only finds that folder's
+chat history. With the **Official Panel Everywhere** setting (on by default) the extension removes that limit
+using the official extension's own `claudeCode.claudeProcessWrapper` setting:
 
-VS Code's official Claude Code chat panel always runs in the window's **first folder**, and only finds chat
-history for that folder. It cannot be pointed at another project. So:
+1. **A small launcher.** The official panel starts every Claude process through the program named in
+   `claudeCode.claudeProcessWrapper`. Claude Command Center sets it to `claude-cc-wrapper`, a tiny program
+   ([source](wrapper/main.go)) that runs the **same** Claude binary with the **same** arguments, only in the right
+   folder: for a resumed chat, the folder recorded in that chat's history; for a new chat, the project you started
+   it from. Everything else (sign-in checks, first-folder chats) runs unchanged.
+2. **History links.** So the official panel can find a chat from another project, the extension adds a *hard link*
+   to that chat's history file in the first folder's history folder. A hard link is a second name for the same file,
+   not a copy: Claude keeps writing to the original, and the link always shows the same content.
 
-| Project | Pane | History |
-|---|---|---|
-| The window's first folder | Official chat panel (bubbles, model picker, `/` menu, Remote Control...) | Loaded by the official extension |
-| Any other project | Claude Code CLI, started in that project's folder | `claude --resume <id>`: Claude gets the whole conversation back as context, and the CLI reprints it |
+Turning the setting off restores `claudeCode.claudeProcessWrapper` and removes every link the extension made
+(your original history files are never changed). If you already use your own process wrapper, the extension leaves
+it alone and other projects open in the Claude Code CLI instead.
 
-Both are the same Claude Code agent with your subscription, settings, CLAUDE.md, MCP servers and hooks. Any chat
-can also be opened in the CLI (right-click a chat, then **Open in Claude Code CLI**).
+Things to know:
+- Chats linked this way also appear in the first folder's chat list in the official panel, and in `claude --resume`
+  run from the first folder in a plain terminal. Resuming one from a plain terminal there would run it in the first
+  folder; open it from Claude Command Center (or `cd` to its project first).
+- The official panel's `@`-file search and "current file" attachment work from the window's first folder; add the
+  other projects to the workspace (right-click a project, **Add Folder to Workspace**) to search their files too.
+  Claude's own tools, edits, CLAUDE.md and settings use the chat's project folder.
 
 ## How it works
 
@@ -59,7 +72,8 @@ panel). Two programs writing to one conversation can split its history into two 
 
 | Setting | Default | |
 |---|---|---|
-| `claudeCC.preferOfficialPanel` | `true` | Open the first folder's chats in the official chat panel (otherwise in the CLI) |
+| `claudeCC.officialPanelEverywhere` | `true` | Let the official chat panel host chats of every project (see above) |
+| `claudeCC.preferOfficialPanel` | `true` | Open chats in the official chat panel when it can host them (otherwise in the CLI) |
 | `claudeCC.claudeCommand` | `claude` | Path to the CLI if it is not on PATH |
 | `claudeCC.extraArgs` | | Extra CLI arguments, e.g. `--model opus` |
 | `claudeCC.claudeDataDir` | `~/.claude` | Override where conversations are read from |
@@ -72,21 +86,28 @@ panel). Two programs writing to one conversation can split its history into two 
 ## Install
 
 ```
-code --install-extension claude-command-center-0.4.0.vsix
+code --install-extension claude-command-center-0.5.0.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 
-Requirements: VS Code 1.90 or later and the Claude Code CLI, installed and logged in (`claude` works in a terminal).
-The official Claude Code extension is optional; it is needed only for the official chat panel.
+Requirements: VS Code 1.90 or later and the official Claude Code extension (for the chat panels). The Claude Code
+CLI (`claude` in a terminal) is needed only for CLI panes. The launcher ships for Windows, macOS and Linux (x64 and arm64).
 
 ## Development
 
-No build step and no runtime dependencies: plain JavaScript.
+Plain JavaScript, no runtime dependencies. The launcher is Go (`wrapper/`), prebuilt into `bin/`.
 
 ```
-npm run package     # builds the .vsix
+npm run build-wrapper   # rebuilds bin/<platform>/claude-cc-wrapper (needs Go)
+npm run package         # builds the .vsix
 xvfb-run -a node test/run.js <dir with @vscode/test-electron> [shot.png] <VS Code binary>
+xvfb-run -a -s "-screen 0 1600x1000x24" node test/run-official.js <dir with @vscode/test-electron> <VS Code binary> <extensions dir with anthropic.claude-code> [shot.png]
 ```
+`test/run-official.js` drives the **real** official extension and the real `claude` CLI (a few cheap Haiku turns,
+xdotool to type into the panel). It checks: the setting is applied; a chat from another project opens in the official
+panel with its history and context and runs in its own folder; a new chat started for another project runs there and
+is linked; first-folder chats are unchanged; several new chats opened back to back each get their own folder; a closed
+chat reopens in its folder; and turning the feature off restores the setting and removes only the links.
 `test/run.js` starts a real VS Code with a fake `claude`. It checks:
 - discovery of conversations and projects
 - resuming each conversation in its own folder

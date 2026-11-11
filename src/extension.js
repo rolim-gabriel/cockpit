@@ -3,13 +3,36 @@ const path = require('path');
 const { Board } = require('./board');
 const { ProjectsProvider, BoardProvider, ago } = require('./tree');
 const sessions = require('./sessions');
+const { NativeEverywhere } = require('./native');
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
-  const board = new Board(context);
+  const native = new NativeEverywhere(context);
+  const board = new Board(context, native);
   const projects = new ProjectsProvider(context, board);
   const boardView = new BoardProvider(board);
   projects.refresh();
+
+  // Official panel everywhere: on by default when the official extension is installed.
+  const syncEverywhere = async () => {
+    await board.refreshOfficial();
+    const want = vscode.workspace.getConfiguration('claudeCC').get('officialPanelEverywhere');
+    if (want && board.officialAvailable) {
+      const before = native.wrapperState();
+      if (await native.enable({ quiet: before === 'other' && context.globalState.get('warnedOtherWrapper') })) {
+        if (before === 'none') vscode.window.showInformationMessage('Claude Command Center: the official Claude Code panel can now open chats of every project, each in its own folder. (Setting "Official Panel Everywhere"; turning it off undoes everything.)');
+      } else if (before === 'other') context.globalState.update('warnedOtherWrapper', true);
+    } else if (!want && native.wrapperState() === 'ours') {
+      const n = await native.disable();
+      vscode.window.showInformationMessage(`Claude Command Center: official panel limited to the first folder again (${n} history link${n === 1 ? '' : 's'} removed).`);
+    }
+    projects.refresh();
+  };
+  syncEverywhere();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('claudeCC.officialPanelEverywhere')) syncEverywhere(); }),
+    vscode.extensions.onDidChange(() => syncEverywhere()),
+  );
 
   const projectsTree = vscode.window.createTreeView('claudeCC.projects', { treeDataProvider: projects, showCollapseAll: true });
   const boardTree = vscode.window.createTreeView('claudeCC.board', { treeDataProvider: boardView });
@@ -17,7 +40,10 @@ function activate(context) {
 
   // ---- keep the history list fresh -------------------------------------
   let refreshTimer;
-  const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => projects.refresh(), 1500); };
+  const scheduleRefresh = () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => { projects.refresh(); native.sync(projects.projects).catch(() => {}); }, 1500);
+  };
   const watcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(vscode.Uri.file(path.join(sessions.dataDir(), 'projects')), '**/*.jsonl'));
   watcher.onDidCreate(scheduleRefresh);
@@ -136,9 +162,10 @@ function activate(context) {
     if (!el) return;
     if (!board.canUseOfficial(el.session.cwd)) {
       const first = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
-      vscode.window.showWarningMessage(board.officialAvailable
-        ? `The official Claude Code chat panel only runs in this window's first folder${first ? ` (${first.name})` : ''}, so other projects open in the Claude Code CLI.`
-        : 'The official Claude Code extension is not installed or not active.');
+      vscode.window.showWarningMessage(!board.officialAvailable
+        ? 'The official Claude Code extension is not installed or not active.'
+        : !first ? 'Open a folder in this window first: the official Claude Code panel needs one.'
+          : 'Turn on the "Official Panel Everywhere" setting to open other projects\' chats in the official panel.');
       return;
     }
     if (board.open.has(el.session.id)) board.open.get(el.session.id).terminal.dispose();
@@ -214,7 +241,7 @@ function activate(context) {
   if (vscode.workspace.getConfiguration('claudeCC').get('restoreOnStartup') && saved && saved.items && saved.items.length) {
     setTimeout(() => board.restore(), 1500);
   }
-  return { board, projects }; // used by the integration test
+  return { board, projects, native }; // used by the integration test
 }
 
 function deactivate() {}

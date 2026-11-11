@@ -45,9 +45,14 @@ async function applyGrid(n) {
 }
 
 class Board {
-  /** @param {vscode.ExtensionContext} context */
-  constructor(context) {
+  /**
+   * @param {vscode.ExtensionContext} context
+   * @param {import('./native').NativeEverywhere} native
+   */
+  constructor(context, native) {
     this.context = context;
+    this.native = native;
+    this.known = new Map(); // latest session scan, set by updateTitles
     /** Terminal panes we launched: sessionId -> entry. Official panels are tracked by the official extension. */
     this.open = new Map();
     this._onDidChange = new vscode.EventEmitter();
@@ -70,13 +75,22 @@ class Board {
     this.officialAvailable = (await vscode.commands.getCommands(true)).includes(OFFICIAL_OPEN);
   }
 
+  firstFolder() {
+    const first = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+    return first && first.uri.fsPath;
+  }
+
+  isFirstFolder(project) {
+    const first = this.firstFolder();
+    return !!first && sessions.pathKey(first) === sessions.pathKey(project);
+  }
+
   /**
-   * The official chat panel always runs in the window's first folder, so it can host
-   * only that project's chats. Every other project uses the CLI.
+   * The official chat panel runs in the window's first folder. With "official panel
+   * everywhere" active (our process wrapper), it can host any project's chats.
    */
   canUseOfficial(project) {
-    const first = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
-    return this.officialAvailable && !!first && sessions.pathKey(first.uri.fsPath) === sessions.pathKey(project);
+    return this.officialAvailable && !!this.firstFolder() && (this.isFirstFolder(project) || this.native.active);
   }
 
   prefersOfficial(project) {
@@ -148,12 +162,22 @@ class Board {
       this.open.get(sessionId).terminal.show(false);
       return;
     }
-    const official = !opts.fork && (opts.view === 'official' ? this.canUseOfficial(project) : opts.view !== 'terminal' && this.prefersOfficial(project));
+    let official = !opts.fork && (opts.view === 'official' ? this.canUseOfficial(project) : opts.view !== 'terminal' && this.prefersOfficial(project));
     const column = opts.column || (opts.mode === 'tab' ? vscode.ViewColumn.Active : await this.nextFreeColumn());
 
+    if (official && !this.isFirstFolder(project)) {
+      // Let the official panel find this chat's history (a hard link) or tell our
+      // wrapper which folder the new chat belongs to.
+      if (sessionId) official = await this.native.linkTranscript(sessions.sessionFile(project, sessionId), this.firstFolder(), this.known);
+      else this.native.prepareNewChat(project, this.firstFolder(), this.known);
+    }
     if (official) {
-      // The official extension opens (or reveals) the chat with its full history in that pane.
+      // The official extension opens (or reveals) the chat with its full history in that pane;
+      // our wrapper starts its Claude process in the chat's own folder.
       await vscode.commands.executeCommand(OFFICIAL_OPEN, sessionId, undefined, column);
+      if (!sessionId && !this.isFirstFolder(project) && !await this.native.waitForClaim()) {
+        vscode.window.showWarningMessage(`The new Claude chat for ${path.basename(project)} did not start in time, so it may be running in ${path.basename(this.firstFolder())}. Close it and try again.`);
+      }
       await this.waitForPane(column);
       this._onDidChange.fire();
       return;
@@ -297,6 +321,7 @@ class Board {
 
   /** Called after a session list refresh so board labels pick up real titles. */
   updateTitles(projects) {
+    this.known = projects;
     let changed = false;
     for (const e of this.open.values()) {
       const p = projects.get(sessions.pathKey(e.project));

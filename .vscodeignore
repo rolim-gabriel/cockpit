@@ -2,3 +2,4 @@
 test/**
 *.vsix
 media/screenshot-*.png
+wrapper/**

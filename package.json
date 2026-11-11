@@ -2,7 +2,7 @@
   "name": "claude-command-center",
   "displayName": "Claude Command Center",
   "description": "Native Claude Code sessions for many projects side by side in one VS Code window: a resizable grid of official Claude Code chat panels and Claude Code CLI panes, each in its own project folder and resumed with its full history.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -449,10 +449,15 @@
     "configuration": {
       "title": "Claude Command Center",
       "properties": {
+        "claudeCC.officialPanelEverywhere": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Let the official Claude Code chat panel open chats of **every** project, each running in its own folder. Works by setting the official `claudeCode.claudeProcessWrapper` to a small Claude Command Center program and adding hard links to those chats' history files in the first folder's history folder. Turning this off restores the setting and removes the links."
+        },
         "claudeCC.preferOfficialPanel": {
           "type": "boolean",
           "default": true,
-          "description": "Open chats of this window's first folder in the official Claude Code chat panel. (That panel only runs in the first folder; other projects always open in the Claude Code CLI.)"
+          "description": "Open chats in the official Claude Code chat panel when it can host them (otherwise in the Claude Code CLI)."
         },
         "claudeCC.claudeCommand": {
           "type": "string",
@@ -498,7 +503,8 @@
     }
   },
   "scripts": {
-    "package": "npx --yes @vscode/vsce package --no-dependencies"
+    "package": "npx --yes @vscode/vsce package --no-dependencies",
+    "build-wrapper": "sh wrapper/build.sh"
   },
   "repository": {
     "type": "git",
