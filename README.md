@@ -11,6 +11,18 @@ extension updates, the panes pick up the update automatically.
 
 ![Three official Claude Code panels, three projects, one window](media/screenshot-official-grid.png)
 
+## Close and reopen: everything comes back
+
+Save your setup once with **Save Command Center** (save icon in the Projects view). It writes a
+`Claude Command Center.code-workspace` file containing your projects (the current first folder stays first) and
+opens it. From then on, just open that file: VS Code puts every tab back in its pane, the official Claude Code
+extension brings each chat back with its history, and the launcher below starts each one in its own project
+folder. Claude CLI panes are reopened by this extension with `--resume`.
+
+This uses VS Code's and the official extension's own restore; nothing extra is stored. (A plain folder window
+restores the same way; the workspace file just gives the command center one fixed place, with every project
+shown in the Explorer.)
+
 ## Official panel everywhere (how it works)
 
 On its own, the official chat panel always runs in the window's **first folder** and only finds that folder's
@@ -46,7 +58,7 @@ Things to know:
 | Keep chat history | Claude Code (CLI **and** the official chat panel) saves every conversation in `~/.claude/projects/<folder>/<session-id>.jsonl`. The sidebar reads those files (read only) and lists every conversation by project. |
 | See everything at once | Panes are editor groups laid out as a grid (2 side by side, 2x2 quadrants, 3x2, 3x3...). Drag the borders between panes to resize them and drag tabs to rearrange. `Ctrl+Alt+M` maximizes a pane; press it again to go back. |
 | Know who needs you | CLI panes show working / waiting / ready in the Board view and status bar. A notification appears when a background session finishes or seems to wait for approval. (Official panels have their own indicators.) |
-| Survive restarts | The board's CLI panes are saved per workspace and reopened with `--resume`. Official chat tabs are restored by the official extension. |
+| Survive restarts | Close the window and open it again: VS Code and the official extension restore every chat tab in its pane, each resumed in its own folder. CLI panes are reopened with `--resume`. See *Close and reopen* above. |
 
 ## Using it
 
@@ -86,7 +98,7 @@ panel). Two programs writing to one conversation can split its history into two 
 ## Install
 
 ```
-code --install-extension claude-command-center-0.5.0.vsix
+code --install-extension claude-command-center-0.6.0.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 
@@ -101,8 +113,12 @@ Plain JavaScript, no runtime dependencies. The launcher is Go (`wrapper/`), preb
 npm run build-wrapper   # rebuilds bin/<platform>/claude-cc-wrapper (needs Go)
 npm run package         # builds the .vsix
 xvfb-run -a node test/run.js <dir with @vscode/test-electron> [shot.png] <VS Code binary>
+xvfb-run -a -s "-screen 0 1800x1000x24" node test/restore/run.js <VS Code binary> <official claude-code .vsix> [shot.png]
 xvfb-run -a -s "-screen 0 1600x1000x24" node test/run-official.js <dir with @vscode/test-electron> <VS Code binary> <extensions dir with anthropic.claude-code> [shot.png]
 ```
+`test/restore/run.js` closes and reopens a normal VS Code window (test windows do not restore tabs) with a saved
+Command Center workspace and checks that every official chat comes back in its pane, resumed in its own folder.
+
 `test/run-official.js` drives the **real** official extension and the real `claude` CLI (a few cheap Haiku turns,
 xdotool to type into the panel). It checks: the setting is applied; a chat from another project opens in the official
 panel with its history and context and runs in its own folder; a new chat started for another project runs there and

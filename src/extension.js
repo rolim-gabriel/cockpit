@@ -1,5 +1,7 @@
 const vscode = require('vscode');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
 const { Board } = require('./board');
 const { ProjectsProvider, BoardProvider, ago } = require('./tree');
 const sessions = require('./sessions');
@@ -125,6 +127,22 @@ function activate(context) {
   });
   reg('claudeCC.refresh', () => projects.refresh());
   reg('claudeCC._showAll', p => { projects.expanded.add(sessions.pathKey(p)); projects.refresh(); });
+  // A saved workspace is what VS Code reopens with every tab in its pane, official Claude chats included.
+  reg('claudeCC.saveCommandCenter', async () => {
+    const folders = commandCenterFolders((vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath), projects.pinned);
+    if (!folders.length) return vscode.window.showWarningMessage('Pin or add at least one project first.');
+    const current = vscode.workspace.workspaceFile && vscode.workspace.workspaceFile.scheme === 'file' ? vscode.workspace.workspaceFile : undefined;
+    const uri = current || await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(os.homedir(), 'Claude Command Center.code-workspace')),
+      filters: { 'Code Workspace': ['code-workspace'] }, saveLabel: 'Save Command Center',
+    });
+    if (!uri) return;
+    writeCommandCenter(uri.fsPath, folders);
+    if (current) return vscode.window.showInformationMessage(`Command Center updated: ${folders.length} project folders.`);
+    const pick = await vscode.window.showInformationMessage(
+      `Saved ${path.basename(uri.fsPath)} with ${folders.length} project folders. Open it now? From then on, closing and reopening it brings every chat back in its pane.`, 'Open');
+    if (pick) await vscode.commands.executeCommand('vscode.openFolder', uri);
+  });
   reg('claudeCC.addToWorkspace', el => {
     const p = projectOf(el);
     const n = (vscode.workspace.workspaceFolders || []).length;
@@ -244,6 +262,21 @@ function activate(context) {
   return { board, projects, native }; // used by the integration test
 }
 
+/** Workspace folders first (the first one keeps hosting the official panel), then pinned projects. */
+function commandCenterFolders(workspaceFolders, pinned) {
+  const out = [];
+  for (const f of [...workspaceFolders, ...pinned]) if (!out.some(o => sessions.pathKey(o) === sessions.pathKey(f))) out.push(f);
+  return out;
+}
+
+/** Writes (or updates the folders of) a .code-workspace file, keeping any settings already in it. */
+function writeCommandCenter(file, folders) {
+  let data = { folders: [], settings: {} };
+  try { data = { ...data, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { /* new file */ }
+  data.folders = folders.map(p => ({ path: p }));
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+}
+
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, commandCenterFolders, writeCommandCenter };

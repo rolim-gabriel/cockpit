@@ -2,7 +2,7 @@
   "name": "claude-command-center",
   "displayName": "Claude Command Center",
   "description": "Native Claude Code sessions for many projects side by side in one VS Code window: a resizable grid of official Claude Code chat panels and Claude Code CLI panes, each in its own project folder and resumed with its full history.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -48,7 +48,7 @@
     "viewsWelcome": [
       {
         "view": "claudeCC.projects",
-        "contents": "No projects yet.\n[Add Project Folder](command:claudeCC.addProject)\nExisting Claude Code conversations are discovered automatically from your Claude data folder."
+        "contents": "No projects yet.\n[Add Project Folder](command:claudeCC.addProject)\nExisting Claude Code conversations are discovered automatically from your Claude data folder.\n[Save Command Center](command:claudeCC.saveCommandCenter) to reopen this window later with every chat in its pane."
       },
       {
         "view": "claudeCC.board",
@@ -212,6 +212,12 @@
         "title": "Open in Claude Code CLI (terminal)",
         "category": "Claude CC",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "claudeCC.saveCommandCenter",
+        "title": "Save Command Center (reopen with all chats)",
+        "category": "Claude CC",
+        "icon": "$(save)"
       }
     ],
     "menus": {
@@ -265,6 +271,11 @@
           "command": "claudeCC.openSettings",
           "when": "view == claudeCC.projects",
           "group": "navigation@9"
+        },
+        {
+          "command": "claudeCC.saveCommandCenter",
+          "when": "view == claudeCC.projects",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [

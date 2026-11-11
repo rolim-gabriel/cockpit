@@ -103,5 +103,13 @@ exports.run = async () => {
     await sleep(1500);
     try { execSync(`import -window root ${process.env.CCC_SHOT.replace('.png', '-official.png')}`); } catch { /* optional */ }
   }
+  // Save Command Center: workspace folders first, pinned projects after, no duplicates, settings kept.
+  const { commandCenterFolders, writeCommandCenter } = require('../src/extension');
+  const ws = path.join(tmp, 'cc.code-workspace');
+  fs.writeFileSync(ws, JSON.stringify({ folders: [], settings: { 'editor.fontSize': 15 } }));
+  writeCommandCenter(ws, commandCenterFolders([work], [found[0].path, work, found[1].path]));
+  const saved2 = JSON.parse(fs.readFileSync(ws, 'utf8'));
+  assert.deepStrictEqual(saved2.folders.map(f => f.path), [work, found[0].path, found[1].path], 'command center folders');
+  assert.strictEqual(saved2.settings['editor.fontSize'], 15, 'existing workspace settings kept');
   console.log('all assertions passed');
 };
