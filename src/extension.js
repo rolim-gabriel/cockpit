@@ -1,15 +1,40 @@
 const vscode = require('vscode');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
 const { Board } = require('./board');
 const { ProjectsProvider, BoardProvider, ago } = require('./tree');
 const sessions = require('./sessions');
+const { NativeEverywhere } = require('./native');
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
-  const board = new Board(context);
+  const native = new NativeEverywhere(context);
+  const board = new Board(context, native);
   const projects = new ProjectsProvider(context, board);
   const boardView = new BoardProvider(board);
   projects.refresh();
+
+  // Official panel everywhere: on by default when the official extension is installed.
+  const syncEverywhere = async () => {
+    await board.refreshOfficial();
+    const want = vscode.workspace.getConfiguration('claudeCC').get('officialPanelEverywhere');
+    if (want && board.officialAvailable) {
+      const before = native.wrapperState();
+      if (await native.enable({ quiet: before === 'other' && context.globalState.get('warnedOtherWrapper') })) {
+        if (before === 'none') vscode.window.showInformationMessage('Claude Command Center: the official Claude Code panel can now open chats of every project, each in its own folder. (Setting "Official Panel Everywhere"; turning it off undoes everything.)');
+      } else if (before === 'other') context.globalState.update('warnedOtherWrapper', true);
+    } else if (!want && native.wrapperState() === 'ours') {
+      const n = await native.disable();
+      vscode.window.showInformationMessage(`Claude Command Center: official panel limited to the first folder again (${n} history link${n === 1 ? '' : 's'} removed).`);
+    }
+    projects.refresh();
+  };
+  syncEverywhere();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('claudeCC.officialPanelEverywhere')) syncEverywhere(); }),
+    vscode.extensions.onDidChange(() => syncEverywhere()),
+  );
 
   const projectsTree = vscode.window.createTreeView('claudeCC.projects', { treeDataProvider: projects, showCollapseAll: true });
   const boardTree = vscode.window.createTreeView('claudeCC.board', { treeDataProvider: boardView });
@@ -17,7 +42,10 @@ function activate(context) {
 
   // ---- keep the history list fresh -------------------------------------
   let refreshTimer;
-  const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => projects.refresh(), 1500); };
+  const scheduleRefresh = () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => { projects.refresh(); native.sync(projects.projects).catch(() => {}); }, 1500);
+  };
   const watcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(vscode.Uri.file(path.join(sessions.dataDir(), 'projects')), '**/*.jsonl'));
   watcher.onDidCreate(scheduleRefresh);
@@ -99,6 +127,22 @@ function activate(context) {
   });
   reg('claudeCC.refresh', () => projects.refresh());
   reg('claudeCC._showAll', p => { projects.expanded.add(sessions.pathKey(p)); projects.refresh(); });
+  // A saved workspace is what VS Code reopens with every tab in its pane, official Claude chats included.
+  reg('claudeCC.saveCommandCenter', async () => {
+    const folders = commandCenterFolders((vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath), projects.pinned);
+    if (!folders.length) return vscode.window.showWarningMessage('Pin or add at least one project first.');
+    const current = vscode.workspace.workspaceFile && vscode.workspace.workspaceFile.scheme === 'file' ? vscode.workspace.workspaceFile : undefined;
+    const uri = current || await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(os.homedir(), 'Claude Command Center.code-workspace')),
+      filters: { 'Code Workspace': ['code-workspace'] }, saveLabel: 'Save Command Center',
+    });
+    if (!uri) return;
+    writeCommandCenter(uri.fsPath, folders);
+    if (current) return vscode.window.showInformationMessage(`Command Center updated: ${folders.length} project folders.`);
+    const pick = await vscode.window.showInformationMessage(
+      `Saved ${path.basename(uri.fsPath)} with ${folders.length} project folders. Open it now? From then on, closing and reopening it brings every chat back in its pane.`, 'Open');
+    if (pick) await vscode.commands.executeCommand('vscode.openFolder', uri);
+  });
   reg('claudeCC.addToWorkspace', el => {
     const p = projectOf(el);
     const n = (vscode.workspace.workspaceFolders || []).length;
@@ -127,26 +171,23 @@ function activate(context) {
     await board.openSession(el.session.cwd, el.session.id, { title: el.session.title });
   });
   reg('claudeCC.openSessionNewPane', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, mode: 'tab' }));
-  reg('claudeCC.openAsChat', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, kind: 'chat' }));
-  reg('claudeCC.openAsTerminal', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, kind: 'terminal' }));
+  reg('claudeCC.openInTerminal', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, view: 'terminal' }));
   reg('claudeCC.newTerminalSession', async el => {
-    const p = projectOf(el) || await pickProject('Start a new Claude terminal session in...');
-    if (p) await board.openSession(p, undefined, { kind: 'terminal' });
+    const p = projectOf(el) || await pickProject('Start a new Claude CLI session in...');
+    if (p) await board.openSession(p, undefined, { view: 'terminal' });
   });
   reg('claudeCC.openInOfficial', async el => {
     if (!el) return;
-    // The official chat panel always runs in the window's first folder, so it can only host that project's chats.
-    const first = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
-    if (!first || sessions.pathKey(first.uri.fsPath) !== sessions.pathKey(el.session.cwd)) {
-      vscode.window.showWarningMessage(`The official Claude Code panel can only open chats of this window's first folder${first ? ` (${first.name})` : ''}. Use "Open as Chat" for other projects.`);
+    if (!board.canUseOfficial(el.session.cwd)) {
+      const first = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+      vscode.window.showWarningMessage(!board.officialAvailable
+        ? 'The official Claude Code extension is not installed or not active.'
+        : !first ? 'Open a folder in this window first: the official Claude Code panel needs one.'
+          : 'Turn on the "Official Panel Everywhere" setting to open other projects\' chats in the official panel.');
       return;
     }
-    if (!vscode.extensions.getExtension('anthropic.claude-code')) {
-      vscode.window.showWarningMessage('The official Claude Code extension is not installed.');
-      return;
-    }
-    if (board.open.has(el.session.id)) board.open.get(el.session.id).view.dispose();
-    await vscode.commands.executeCommand('claude-vscode.editor.open', el.session.id, undefined, await board.nextFreeColumn());
+    if (board.open.has(el.session.id)) board.open.get(el.session.id).terminal.dispose();
+    await board.openSession(el.session.cwd, el.session.id, { view: 'official' });
   });
   reg('claudeCC.forkSession', el => el && board.openSession(el.session.cwd, el.session.id, { title: 'fork: ' + el.session.title, fork: true }));
   reg('claudeCC.previewSession', async el => {
@@ -174,16 +215,13 @@ function activate(context) {
       canPickMany: true, matchOnDescription: true, placeHolder: 'Pick the chats to put on the board (each gets its own pane)',
     });
     if (!picks || !picks.length) return;
-    const views = [{ label: '$(comment-discussion) Chat view', kind: 'chat' }, { label: '$(terminal) Terminal (CLI)', kind: 'terminal' }];
-    if (board.defaultKind() === 'terminal') views.reverse();
-    const view = await vscode.window.showQuickPick(views, { placeHolder: 'Open them as...' });
-    if (!view) return;
-    await board.setLayout(board.open.size + picks.length);
+    const used = vscode.window.tabGroups.all.filter(g => g.tabs.length).length;
+    await board.setLayout(used + picks.length);
     for (const p of picks) {
-      if (p.newIn) await board.openSession(p.newIn, undefined, { quiet: true, kind: view.kind });
-      else await board.openSession(p.session.cwd, p.session.id, { title: p.session.title, quiet: true, kind: view.kind });
+      if (p.newIn) await board.openSession(p.newIn, undefined, { quiet: true });
+      else await board.openSession(p.session.cwd, p.session.id, { title: p.session.title, quiet: true });
     }
-    if (board.open.size > picks.length) await board.tidy();
+
   });
   reg('claudeCC.layout', async () => {
     const n = board.open.size;
@@ -195,6 +233,7 @@ function activate(context) {
     if (pick) await board.setLayout(pick.n);
   });
   reg('claudeCC.tidy', () => board.tidy());
+  reg('claudeCC.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', 'claudeCC'));
   reg('claudeCC.restoreBoard', () => board.restore());
   reg('claudeCC.closeBoard', async () => {
     const ok = await vscode.window.showWarningMessage('Close all Claude sessions on the board? Conversations are saved and can be resumed.', { modal: true }, 'Close all');
@@ -202,14 +241,10 @@ function activate(context) {
   });
   reg('claudeCC.focusPane', async () => {
     const pick = await openPicks('Jump to session', false);
-    if (pick) board.reveal(board.open.get(pick.id));
+    if (pick) board.open.get(pick.id).terminal.show(false);
   });
-  reg('claudeCC.focusBoardItem', id => { const e = board.open.get(id); if (e) board.reveal(e); });
-  reg('claudeCC.closeBoardItem', item => item && item.entry && item.entry.view.dispose());
-  reg('claudeCC.switchView', arg => {
-    const id = typeof arg === 'string' ? arg : arg && arg.entry && arg.entry.sessionId;
-    if (id) return board.switchView(id);
-  });
+  reg('claudeCC.focusBoardItem', id => { const e = board.open.get(id); if (e) e.terminal.show(false); });
+  reg('claudeCC.closeBoardItem', item => item && item.entry && item.entry.terminal.dispose());
   reg('claudeCC.maximize', () => vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup'));
   reg('claudeCC.broadcast', async () => {
     if (!board.open.size) return vscode.window.showInformationMessage('No sessions on the board.');
@@ -224,9 +259,24 @@ function activate(context) {
   if (vscode.workspace.getConfiguration('claudeCC').get('restoreOnStartup') && saved && saved.items && saved.items.length) {
     setTimeout(() => board.restore(), 1500);
   }
-  return { board, projects }; // used by the integration test
+  return { board, projects, native }; // used by the integration test
+}
+
+/** Workspace folders first (the first one keeps hosting the official panel), then pinned projects. */
+function commandCenterFolders(workspaceFolders, pinned) {
+  const out = [];
+  for (const f of [...workspaceFolders, ...pinned]) if (!out.some(o => sessions.pathKey(o) === sessions.pathKey(f))) out.push(f);
+  return out;
+}
+
+/** Writes (or updates the folders of) a .code-workspace file, keeping any settings already in it. */
+function writeCommandCenter(file, folders) {
+  let data = { folders: [], settings: {} };
+  try { data = { ...data, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { /* new file */ }
+  data.folders = folders.map(p => ({ path: p }));
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
 }
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, commandCenterFolders, writeCommandCenter };
