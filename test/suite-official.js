@@ -62,7 +62,14 @@ exports.run = async () => {
   const newId = path.basename(newFile, '.jsonl');
   const newLink = path.join(native.projectDirFor(dirs.first, projects.projects), newId + '.jsonl');
   assert.ok(fs.existsSync(newLink), 'new chat linked for reopening');
-  console.log('step 3 ok: new chat ran in docs-site and was linked');
+  projects.refresh();
+  assert.ok(board.chats.has(sid), 'resumed official chat is on the board');
+  assert.ok(board.chats.has(newId), 'new official chat is on the board once its id is known');
+  const firstIds = projects.project(dirs.first).sessions.map(x => x.id);
+  assert.ok(!firstIds.includes(sid) && !firstIds.includes(newId), 'linked chats are not listed under the first folder');
+  const notesIds = projects.project(dirs.notes).sessions.map(x => x.id);
+  assert.strictEqual(new Set(notesIds).size, notesIds.length, 'no duplicates');
+  console.log('step 3 ok: new chat ran in docs-site and was linked; board tracks both official chats');
 
   // 4. First-folder chats are untouched by the wrapper.
   await board.openSession(dirs.first, undefined, {});

@@ -42,6 +42,14 @@ Turning the setting off restores `claudeCode.claudeProcessWrapper` and removes e
 (your original history files are never changed). If you already use your own process wrapper, the extension leaves
 it alone and other projects open in the Claude Code CLI instead.
 
+Safety:
+- If a chat's project folder is missing (moved, renamed, or not synced yet), the launcher refuses to start it and
+  says which folder it needs, instead of running Claude in the wrong project.
+- Links are only ever *added*. If a link and its original ever stop being the same file, the newer content is
+  kept under both names and the older one is backed up to `~/.claude-command-center/backups`. Deleting a chat
+  in the official panel is respected (the link is not recreated).
+- New-chat handovers are per request and per window, so several windows or several new chats at once never mix up folders.
+
 Things to know:
 - Chats linked this way also appear in the first folder's chat list in the official panel, and in `claude --resume`
   run from the first folder in a plain terminal. Resuming one from a plain terminal there would run it in the first
@@ -57,7 +65,7 @@ Things to know:
 | Keep projects separate | Each CLI pane starts `claude` with its working folder set to that project. No multi-root merge is needed. |
 | Keep chat history | Claude Code (CLI **and** the official chat panel) saves every conversation in `~/.claude/projects/<folder>/<session-id>.jsonl`. The sidebar reads those files (read only) and lists every conversation by project. |
 | See everything at once | Panes are editor groups laid out as a grid (2 side by side, 2x2 quadrants, 3x2, 3x3...). Drag the borders between panes to resize them and drag tabs to rearrange. `Ctrl+Alt+M` maximizes a pane; press it again to go back. |
-| Know who needs you | CLI panes show working / waiting / ready in the Board view and status bar. A notification appears when a background session finishes or seems to wait for approval. (Official panels have their own indicators.) |
+| Know who needs you | Every chat opened from the board (official panels and CLI panes) shows working / waiting / ready in the Board view and status bar; click one to jump to it. A notification appears when a background chat finishes or seems to wait for approval. |
 | Survive restarts | Close the window and open it again: VS Code and the official extension restore every chat tab in its pane, each resumed in its own folder. CLI panes are reopened with `--resume`. See *Close and reopen* above. |
 
 ## Using it
@@ -98,7 +106,7 @@ panel). Two programs writing to one conversation can split its history into two 
 ## Install
 
 ```
-code --install-extension claude-command-center-0.6.0.vsix
+code --install-extension claude-command-center-0.6.1.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 
@@ -111,6 +119,7 @@ Plain JavaScript, no runtime dependencies. The launcher is Go (`wrapper/`), preb
 
 ```
 npm run build-wrapper   # rebuilds bin/<platform>/claude-cc-wrapper (needs Go)
+(cd wrapper && go test ./...)   # launcher decisions: folder choice, refusals, per-window handovers
 npm run package         # builds the .vsix
 xvfb-run -a node test/run.js <dir with @vscode/test-electron> [shot.png] <VS Code binary>
 xvfb-run -a -s "-screen 0 1800x1000x24" node test/restore/run.js <VS Code binary> <official claude-code .vsix> [shot.png]

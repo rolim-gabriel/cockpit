@@ -145,6 +145,7 @@ function oneLine(s) {
 function scanAll() {
   const root = projectsDir();
   const projects = new Map();
+  const byId = new Map();
   let dirs = [];
   try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return projects; }
 
@@ -160,6 +161,16 @@ function scanAll() {
       let meta;
       try { meta = readMeta(file, stat); } catch { continue; }
       if (!meta.cwd || !meta.hasConversation) continue;
+      // A chat can have two names (Claude Command Center links it into another history folder
+      // for the official panel). List it once, by the name in its own project's folder.
+      const prev = byId.get(meta.id);
+      if (prev) {
+        if (path.basename(path.dirname(prev.file)) === encodeProjectPath(prev.cwd)) continue;
+        if (path.basename(dir) !== encodeProjectPath(meta.cwd)) continue;
+        const pk = projects.get(pathKey(prev.cwd));
+        if (pk) pk.sessions = pk.sessions.filter(s => s !== prev);
+      }
+      byId.set(meta.id, meta);
       const k = pathKey(meta.cwd);
       if (!projects.has(k)) projects.set(k, { path: meta.cwd, sessions: [] });
       projects.get(k).sessions.push(meta);
@@ -237,4 +248,4 @@ function transcriptMarkdown(meta) {
   return out.join('\n');
 }
 
-module.exports = { scanAll, pathKey, sessionFile, activityState, transcriptMarkdown, dataDir, oneLine };
+module.exports = { scanAll, pathKey, sessionFile, activityState, transcriptMarkdown, dataDir, oneLine, encodeProjectPath };

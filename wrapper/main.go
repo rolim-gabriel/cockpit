@@ -22,11 +22,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
-
-const tailBytes = 256 * 1024
 
 func main() {
 	if len(os.Args) < 2 {
@@ -38,7 +37,14 @@ func main() {
 		exe = override
 	}
 	cwd, _ := os.Getwd()
-	target, reason := chooseFolder(args)
+	target, reason := chooseFolder(args, cwd)
+	if target != "" && !isDir(target) && reason == "resume" {
+		// Never fall back to the window's folder: Claude would then work in the wrong project.
+		logLaunch(target, "missing-folder", args)
+		fmt.Fprintf(os.Stderr, "This chat belongs to the folder %s, which does not exist (moved, renamed or not synced yet). "+
+			"Restore the folder, or open the chat from Claude Command Center after fixing it.\n", target)
+		os.Exit(3)
+	}
 	if target != "" && isDir(target) {
 		cwd = target
 	} else {
@@ -65,7 +71,7 @@ func main() {
 }
 
 // chooseFolder returns the folder the session belongs in, or "" to leave it.
-func chooseFolder(args []string) (string, string) {
+func chooseFolder(args []string, launchDir string) (string, string) {
 	if id := resumeID(args); id != "" {
 		if dir := transcriptCwd(id); dir != "" {
 			return dir, "resume"
@@ -73,7 +79,7 @@ func chooseFolder(args []string) (string, string) {
 		return "", ""
 	}
 	if isNewSession(args) {
-		if dir := claimPending(); dir != "" {
+		if dir := claimPending(launchDir); dir != "" {
 			return dir, "pending"
 		}
 	}
@@ -109,68 +115,53 @@ func configDir() string {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
 		return d
 	}
+	// Claude Command Center writes its data folder setting here when it differs from the default.
+	if data, err := os.ReadFile(filepath.Join(stateDir(), "config.json")); err == nil {
+		var c struct {
+			DataDir string `json:"dataDir"`
+		}
+		if json.Unmarshal(data, &c) == nil && c.DataDir != "" {
+			return c.DataDir
+		}
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".claude")
 }
 
-// transcriptCwd finds <id>.jsonl under the projects folder and returns the last
-// working folder recorded in it.
+// transcriptCwd finds <id>.jsonl under the projects folder and returns the folder the
+// conversation was started in (its first recorded cwd). Later records can carry a
+// subfolder the Bash tool moved into, so the first one is the project.
 func transcriptCwd(id string) string {
 	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
 		return ""
 	}
 	matches, _ := filepath.Glob(filepath.Join(configDir(), "projects", "*", id+".jsonl"))
 	for _, f := range matches {
-		if dir := lastCwd(f); dir != "" {
+		if dir := firstCwd(f); dir != "" {
 			return dir
 		}
 	}
 	return ""
 }
 
-func lastCwd(file string) string {
+func firstCwd(file string) string {
 	f, err := os.Open(file)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return ""
-	}
-	start := int64(0)
-	if st.Size() > tailBytes {
-		start = st.Size() - tailBytes
-	}
-	if _, err := f.Seek(start, 0); err != nil {
-		return ""
-	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
-	found := ""
-	for sc.Scan() {
+	for n := 0; sc.Scan() && n < 2000; n++ {
 		var rec struct {
 			Cwd         string `json:"cwd"`
 			IsSidechain bool   `json:"isSidechain"`
 		}
 		if json.Unmarshal(sc.Bytes(), &rec) == nil && rec.Cwd != "" && !rec.IsSidechain {
-			found = rec.Cwd
+			return rec.Cwd
 		}
 	}
-	if found == "" && start > 0 {
-		// Very long tail without a cwd: fall back to the first records.
-		if _, err := f.Seek(0, 0); err == nil {
-			sc = bufio.NewScanner(f)
-			sc.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
-			for sc.Scan() {
-				var rec struct{ Cwd string `json:"cwd"` }
-				if json.Unmarshal(sc.Bytes(), &rec) == nil && rec.Cwd != "" {
-					return rec.Cwd
-				}
-			}
-		}
-	}
-	return found
+	return ""
 }
 
 func stateDir() string {
@@ -181,27 +172,53 @@ func stateDir() string {
 	return filepath.Join(home, ".claude-command-center")
 }
 
-// claimPending takes the folder Claude Command Center handed over for the next
-// new chat. The file is renamed first so two launches can never both claim it.
-func claimPending() string {
-	file := filepath.Join(stateDir(), "pending-new-chat.json")
-	claimed := fmt.Sprintf("%s.%d", file, os.Getpid())
-	if os.Rename(file, claimed) != nil {
-		return ""
-	}
-	defer os.Remove(claimed)
-	data, err := os.ReadFile(claimed)
+// claimPending takes the folder Claude Command Center handed over for the next new chat
+// launched from this window (launchDir is the window's first folder). Each request is its
+// own file, oldest first; renaming it first makes sure only one launch can claim it.
+func claimPending(launchDir string) string {
+	dir := filepath.Join(stateDir(), "pending")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
-	var p struct {
-		Cwd     string `json:"cwd"`
-		Expires int64  `json:"expires"` // unix ms
+	now := time.Now().UnixMilli()
+	for _, e := range entries { // ReadDir sorts by name; names start with a timestamp
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		file := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		var p struct {
+			Cwd     string `json:"cwd"`
+			From    string `json:"from"`    // first folder of the window that asked
+			Expires int64  `json:"expires"` // unix ms
+		}
+		if json.Unmarshal(data, &p) != nil || now > p.Expires {
+			os.Remove(file)
+			continue
+		}
+		if !samePath(p.From, launchDir) {
+			continue
+		}
+		claimed := file + ".claimed"
+		if os.Rename(file, claimed) != nil {
+			continue // another launch took it
+		}
+		os.Remove(claimed)
+		return p.Cwd
 	}
-	if json.Unmarshal(data, &p) != nil || time.Now().UnixMilli() > p.Expires {
-		return ""
+	return ""
+}
+
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "linux" {
+		return a == b
 	}
-	return p.Cwd
+	return strings.EqualFold(a, b)
 }
 
 func isDir(p string) bool {

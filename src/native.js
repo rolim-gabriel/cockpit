@@ -26,7 +26,7 @@ class NativeEverywhere {
   /** @param {vscode.ExtensionContext} context */
   constructor(context) {
     this.context = context;
-    this.pendingNew = undefined; // { cwd, firstFolder, since }
+    this.pendingNew = []; // [{ cwd, firstFolder, since, before }]
   }
 
   get links() { return this.context.globalState.get('nativeLinks', []); }
@@ -51,23 +51,45 @@ class NativeEverywhere {
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     const same = fs.existsSync(dst) && fs.readFileSync(dst).equals(fs.readFileSync(src));
     if (!same) {
-      // Write next to it and rename, so a running wrapper is never half-written.
+      // Write next to it and rename, so a running wrapper is never half-written. Windows cannot
+      // replace a running .exe, but it can rename it, so move the old one aside first.
       const tmp = dst + '.new';
       fs.copyFileSync(src, tmp);
       fs.chmodSync(tmp, 0o755);
+      if (fs.existsSync(dst)) fs.renameSync(dst, `${dst}.old-${Date.now()}`);
       fs.renameSync(tmp, dst);
     }
+    // Old copies are removed once no chat runs them any more.
+    for (const f of fs.readdirSync(path.dirname(dst))) {
+      if (f.includes('.old-')) try { fs.unlinkSync(path.join(path.dirname(dst), f)); } catch { /* still running */ }
+    }
+    this.writeConfig();
     return dst;
+  }
+
+  /** Tells the wrapper about settings it needs (it cannot read VS Code settings). */
+  writeConfig() {
+    const dataDir = vscode.workspace.getConfiguration('claudeCC').get('claudeDataDir') ? sessions.dataDir() : '';
+    fs.mkdirSync(this.stateDir(), { recursive: true });
+    fs.writeFileSync(path.join(this.stateDir(), 'config.json'), JSON.stringify({ dataDir }));
   }
 
   officialConfig() { return vscode.workspace.getConfiguration('claudeCode'); }
 
-  /** 'ours' | 'none' | 'other' (someone else's wrapper: we never override it) */
-  wrapperState() {
+  currentWrapper() {
     const v = this.officialConfig().inspect(WRAPPER_SETTING);
-    const current = (v && (v.workspaceFolderValue || v.workspaceValue || v.globalValue)) || '';
+    return (v && (v.workspaceFolderValue || v.workspaceValue || v.globalValue)) || '';
+  }
+
+  /**
+   * 'ours' | 'stale' (ours, but a path from another machine, e.g. via Settings Sync) | 'none' |
+   * 'other' (someone else's wrapper: we never override it)
+   */
+  wrapperState() {
+    const current = this.currentWrapper();
     if (!current) return 'none';
-    return path.resolve(current) === path.resolve(this.installedWrapper()) ? 'ours' : 'other';
+    if (path.resolve(current) === path.resolve(this.installedWrapper())) return 'ours';
+    return /^claude-cc-wrapper(\.exe)?$/i.test(current.split(/[\\/]/).pop()) ? 'stale' : 'other';
   }
 
   get active() { return this.wrapperState() === 'ours'; }
@@ -84,16 +106,17 @@ class NativeEverywhere {
       if (!quiet) vscode.window.showWarningMessage('Could not install the Claude Command Center wrapper: ' + err.message);
       return false;
     }
-    if (state === 'none') await this.officialConfig().update(WRAPPER_SETTING, file, vscode.ConfigurationTarget.Global);
+    if (state === 'none' || state === 'stale') await this.officialConfig().update(WRAPPER_SETTING, file, vscode.ConfigurationTarget.Global);
     return true;
   }
 
   /** Turns the feature off: restores the official setting and removes every link we made. */
   async disable() {
-    if (this.wrapperState() === 'ours') await this.officialConfig().update(WRAPPER_SETTING, undefined, vscode.ConfigurationTarget.Global);
+    if (['ours', 'stale'].includes(this.wrapperState())) await this.officialConfig().update(WRAPPER_SETTING, undefined, vscode.ConfigurationTarget.Global);
     let removed = 0;
     for (const l of this.links) {
       try {
+        // Only ever remove the second name of a file that still exists under its original name.
         if (fs.existsSync(l.link) && fs.existsSync(l.real) && sameFile(l.link, l.real)) { fs.unlinkSync(l.link); removed++; }
       } catch { /* leave it */ }
     }
@@ -101,11 +124,17 @@ class NativeEverywhere {
     return removed;
   }
 
-  /** Claude's history folder for a project folder: an existing one if Claude already made it. */
+  /**
+   * Claude's history folder for a project folder: the one Claude names after it, or, if Claude
+   * named it differently (very long paths), the folder holding that project's own (unlinked) chats.
+   */
   projectDirFor(folder, known) {
+    const encoded = path.join(sessions.dataDir(), 'projects', sessions.encodeProjectPath(folder));
+    if (fs.existsSync(encoded)) return encoded;
+    const linked = new Set(this.links.map(l => path.resolve(l.link)));
     const p = known && known.get(sessions.pathKey(folder));
-    if (p && p.sessions.length) return path.dirname(p.sessions[0].file);
-    return path.join(sessions.dataDir(), 'projects', path.resolve(folder).replace(/[^a-zA-Z0-9]/g, '-'));
+    const own = p && p.sessions.find(s => !linked.has(path.resolve(s.file)));
+    return own ? path.dirname(own.file) : encoded;
   }
 
   /**
@@ -118,9 +147,9 @@ class NativeEverywhere {
     if (path.resolve(link) === path.resolve(realFile)) return true; // already a first-folder chat
     if (fs.existsSync(link)) {
       if (sameFile(link, realFile)) return true;
-      // A link of ours that Claude replaced with a new file: point it at the real one again.
-      if (!this.links.some(l => l.link === link)) return false; // not ours: never touch it
-      fs.unlinkSync(link);
+      const ours = this.links.find(l => l.link === link);
+      if (!ours) return false; // not ours: never touch it
+      try { this.reunite(ours); return true; } catch { return false; }
     }
     fs.mkdirSync(dir, { recursive: true });
     try {
@@ -133,24 +162,26 @@ class NativeEverywhere {
     return true;
   }
 
-  /** Hands the folder for the next new official chat to the wrapper. */
+  /**
+   * Hands the folder for the next new official chat of this window to the wrapper. Each request
+   * is its own file, claimed only by a launch from this window's first folder (see wrapper).
+   */
   prepareNewChat(cwd, firstFolder, known) {
-    fs.mkdirSync(this.stateDir(), { recursive: true });
-    const file = this.pendingFile();
-    fs.writeFileSync(file + '.tmp', JSON.stringify({ cwd, expires: Date.now() + PENDING_TTL_MS }));
+    const dir = path.join(this.stateDir(), 'pending');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ cwd, from: firstFolder, expires: Date.now() + PENDING_TTL_MS }));
     fs.renameSync(file + '.tmp', file);
     const proj = known && known.get(sessions.pathKey(cwd));
-    this.pendingNew = { cwd, firstFolder, since: Date.now(), before: new Set(proj ? proj.sessions.map(s => s.id) : []) };
+    this.pendingNew.push({ cwd, firstFolder, since: Date.now(), before: new Set(proj ? proj.sessions.map(s => s.id) : []) });
+    return file;
   }
 
-  pendingFile() { return path.join(this.stateDir(), 'pending-new-chat.json'); }
-
   /**
-   * Waits until the wrapper has claimed the handed-over folder, so several new chats
-   * opened in a row each get their own. Returns false (and withdraws it) on timeout.
+   * Waits until the wrapper has claimed a handover, so several new chats opened in a row each
+   * get their own. Returns false (and withdraws it) on timeout.
    */
-  async waitForClaim(timeoutMs = 20000) {
-    const file = this.pendingFile();
+  async waitForClaim(file, timeoutMs = 20000) {
     for (let t = 0; t < timeoutMs; t += 100) {
       if (!fs.existsSync(file)) return true;
       await new Promise(r => setTimeout(r, 100));
@@ -164,33 +195,47 @@ class NativeEverywhere {
    * links whose original was replaced. Keeps the official panel able to reopen them.
    */
   async sync(projects) {
-    const p = this.pendingNew;
-    if (p && Date.now() - p.since < NEW_CHAT_LINK_WINDOW_MS) {
+    // New chats started for other projects: link each new conversation so the panel can reopen it.
+    this.pendingNew = this.pendingNew.filter(p => Date.now() - p.since < NEW_CHAT_LINK_WINDOW_MS);
+    for (const p of this.pendingNew) {
       const proj = projects.get(sessions.pathKey(p.cwd));
       for (const s of (proj ? proj.sessions : [])) {
-        if (!p.before.has(s.id)) await this.linkTranscript(s.file, p.firstFolder, projects);
+        if (!p.before.has(s.id)) { p.before.add(s.id); await this.linkTranscript(s.file, p.firstFolder, projects); }
       }
-    } else this.pendingNew = undefined;
+    }
 
     let changed = false;
     const keep = [];
     for (const l of this.links) {
-      if (!fs.existsSync(l.real)) { changed = true; continue; }
-      if (!fs.existsSync(l.link) || !sameFile(l.link, l.real)) {
-        try {
-          if (fs.existsSync(l.link)) fs.unlinkSync(l.link);
-          fs.linkSync(l.real, l.link);
-        } catch { changed = true; continue; }
+      // Deleted from the official panel (link gone) or original gone: stop tracking, never recreate.
+      if (!fs.existsSync(l.link) || !fs.existsSync(l.real)) { changed = true; continue; }
+      if (!sameFile(l.link, l.real)) {
+        // One side was replaced by a new file: keep the newer content under both names, back up the other.
+        try { this.reunite(l); } catch { /* retry next time */ }
       }
       keep.push(l);
     }
     if (changed) await this.setLinks(keep);
   }
+
+  /** Makes link and original the same file again, keeping the newer content and backing up the older. */
+  reunite(l) {
+    const a = fs.statSync(l.real), b = fs.statSync(l.link);
+    const linkNewer = b.mtimeMs > a.mtimeMs || (b.mtimeMs === a.mtimeMs && b.size > a.size);
+    const [keepFile, oldFile] = linkNewer ? [l.link, l.real] : [l.real, l.link];
+    const backups = path.join(this.stateDir(), 'backups');
+    fs.mkdirSync(backups, { recursive: true });
+    fs.copyFileSync(oldFile, path.join(backups, `${Date.now()}-${path.basename(oldFile)}`));
+    const tmp = oldFile + '.ccc-tmp';
+    fs.linkSync(keepFile, tmp);
+    fs.renameSync(tmp, oldFile); // the old name now points at the kept content
+  }
 }
 
 function sameFile(a, b) {
   const x = fs.statSync(a, { bigint: true }), y = fs.statSync(b, { bigint: true });
-  return x.ino === y.ino && x.dev === y.dev;
+  // Some network drives report 0 for every file; never treat those as the same file.
+  return x.ino !== 0n && x.ino === y.ino && x.dev === y.dev;
 }
 
 module.exports = { NativeEverywhere };

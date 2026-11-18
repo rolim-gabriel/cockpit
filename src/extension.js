@@ -24,7 +24,7 @@ function activate(context) {
       if (await native.enable({ quiet: before === 'other' && context.globalState.get('warnedOtherWrapper') })) {
         if (before === 'none') vscode.window.showInformationMessage('Claude Command Center: the official Claude Code panel can now open chats of every project, each in its own folder. (Setting "Official Panel Everywhere"; turning it off undoes everything.)');
       } else if (before === 'other') context.globalState.update('warnedOtherWrapper', true);
-    } else if (!want && native.wrapperState() === 'ours') {
+    } else if (!want && (['ours', 'stale'].includes(native.wrapperState()) || native.links.length)) {
       const n = await native.disable();
       vscode.window.showInformationMessage(`Claude Command Center: official panel limited to the first folder again (${n} history link${n === 1 ? '' : 's'} removed).`);
     }
@@ -32,7 +32,10 @@ function activate(context) {
   };
   syncEverywhere();
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('claudeCC.officialPanelEverywhere')) syncEverywhere(); }),
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('claudeCC.officialPanelEverywhere')) syncEverywhere();
+      if (e.affectsConfiguration('claudeCC.claudeDataDir') && native.active) native.writeConfig();
+    }),
     vscode.extensions.onDidChange(() => syncEverywhere()),
   );
 
@@ -42,9 +45,18 @@ function activate(context) {
 
   // ---- keep the history list fresh -------------------------------------
   let refreshTimer;
+  // Debounced, but never postponed by more than 5 s while chats keep writing.
+  let firstPending = 0;
   const scheduleRefresh = () => {
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => { projects.refresh(); native.sync(projects.projects).catch(() => {}); }, 1500);
+    const now = Date.now();
+    if (!firstPending) firstPending = now;
+    const wait = Math.max(0, Math.min(1500, firstPending + 5000 - now));
+    refreshTimer = setTimeout(() => {
+      firstPending = 0;
+      projects.refresh();
+      native.sync(projects.projects).catch(() => {});
+    }, wait);
   };
   const watcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(vscode.Uri.file(path.join(sessions.dataDir(), 'projects')), '**/*.jsonl'));
@@ -58,7 +70,7 @@ function activate(context) {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'claudeCC.focusPane';
   const updateStatus = () => {
-    const all = [...board.open.values()];
+    const all = board.all();
     if (!all.length) { status.hide(); return; }
     const n = s => all.filter(e => e.state === s).length;
     const parts = [`$(sparkle) ${all.length}`];
@@ -96,14 +108,14 @@ function activate(context) {
     all.sort((a, b) => b.mtime - a.mtime);
     return all.slice(0, limit).map(s => ({
       label: s.title,
-      description: `${path.basename(s.cwd)} · ${ago(s.mtime)}${board.open.has(s.id) ? ' · open' : ''}`,
+      description: `${path.basename(s.cwd)} · ${ago(s.mtime)}${board.entry(s.id) ? ' · open' : ''}`,
       detail: s.cwd,
       session: s,
     }));
   }
 
   const openPicks = (placeHolder, canPickMany) => vscode.window.showQuickPick(
-    [...board.open.values()].map(e => ({
+    board.all().filter(e => canPickMany ? e.kind === 'terminal' : true).map(e => ({
       label: `${path.basename(e.project)}: ${e.title}`, description: e.state, id: e.sessionId, picked: canPickMany,
     })), { placeHolder, canPickMany });
 
@@ -209,7 +221,7 @@ function activate(context) {
       ...(pinned.length ? [{ label: 'New sessions', kind: vscode.QuickPickItemKind.Separator }] : []),
       ...pinned.map(p => ({ label: `$(add) New session in ${path.basename(p.path)}`, detail: p.path, newIn: p.path })),
       { label: 'Recent conversations', kind: vscode.QuickPickItemKind.Separator },
-      ...sessionPickItems(80).filter(i => !board.open.has(i.session.id)),
+      ...sessionPickItems(80).filter(i => !board.entry(i.session.id)),
     ];
     const picks = await vscode.window.showQuickPick(items, {
       canPickMany: true, matchOnDescription: true, placeHolder: 'Pick the chats to put on the board (each gets its own pane)',
@@ -241,13 +253,13 @@ function activate(context) {
   });
   reg('claudeCC.focusPane', async () => {
     const pick = await openPicks('Jump to session', false);
-    if (pick) board.open.get(pick.id).terminal.show(false);
+    if (pick) board.reveal(board.entry(pick.id));
   });
-  reg('claudeCC.focusBoardItem', id => { const e = board.open.get(id); if (e) e.terminal.show(false); });
-  reg('claudeCC.closeBoardItem', item => item && item.entry && item.entry.terminal.dispose());
+  reg('claudeCC.focusBoardItem', id => { const e = board.entry(id); if (e) board.reveal(e); });
+  reg('claudeCC.closeBoardItem', item => item && item.entry && board.closeEntry(item.entry));
   reg('claudeCC.maximize', () => vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup'));
   reg('claudeCC.broadcast', async () => {
-    if (!board.open.size) return vscode.window.showInformationMessage('No sessions on the board.');
+    if (!board.open.size) return vscode.window.showInformationMessage('Sending one prompt to several chats works for CLI panes; there are none on the board.');
     const picks = await openPicks('Send the prompt to which sessions?', true);
     if (!picks || !picks.length) return;
     const text = await vscode.window.showInputBox({ prompt: `Prompt for ${picks.length} session(s)`, placeHolder: 'e.g. run the tests and summarise failures' });

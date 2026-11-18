@@ -1,8 +1,8 @@
 // The board: native Claude Code sessions in the editor area, arranged as a grid
-// of editor groups. A pane is either the official Claude Code chat panel (only
-// possible for the window's first folder, where that panel runs) or Claude Code's
-// own CLI in a terminal (any project). We never draw Claude's UI ourselves: we
-// only place sessions in panes and launch them with their history.
+// of editor groups. A pane is either the official Claude Code chat panel (for any
+// project with "official panel everywhere", see native.js) or Claude Code's own CLI
+// in a terminal. We never draw Claude's UI ourselves: we only place sessions in
+// panes, launch them with their history, and follow their status.
 // VS Code handles dragging tabs between panes, resizing and maximizing a pane.
 
 const vscode = require('vscode');
@@ -53,8 +53,14 @@ class Board {
     this.context = context;
     this.native = native;
     this.known = new Map(); // latest session scan, set by updateTitles
-    /** Terminal panes we launched: sessionId -> entry. Official panels are tracked by the official extension. */
+    /** CLI panes we launched: sessionId -> entry (kind 'terminal'). */
     this.open = new Map();
+    /**
+     * Official chat panels opened from the board: sessionId -> entry (kind 'official'). The official
+     * extension owns and restores the tabs; we only follow their transcripts for status and jump-to.
+     */
+    this.chats = new Map();
+    this.awaiting = []; // new official chats whose session id is not known yet
     this._onDidChange = new vscode.EventEmitter();
     this.onDidChange = this._onDidChange.event;
     this.saveTimer = undefined;
@@ -69,6 +75,43 @@ class Board {
       { dispose: () => clearInterval(this.poller) },
     );
     this.poller = setInterval(() => this.poll(), POLL_MS);
+    for (const c of this.store.get('officialChats', [])) this.trackOfficial(c.project, c.sessionId, c.title, true);
+  }
+
+  /** Every chat on the board: CLI panes and official panels. */
+  all() { return [...this.open.values(), ...this.chats.values()]; }
+  entry(id) { return this.open.get(id) || this.chats.get(id); }
+
+  trackOfficial(project, sessionId, title, loading) {
+    if (this.chats.has(sessionId)) return;
+    const file = sessions.sessionFile(project, sessionId);
+    const st = sessions.activityState(file);
+    this.chats.set(sessionId, { kind: 'official', project, sessionId, title: title || 'chat', file,
+      state: st.state === 'working' ? 'working' : 'idle', lastChange: Date.now(), size: st.size });
+    if (!loading) this.saveChats();
+    this._onDidChange.fire();
+  }
+
+  saveChats() {
+    this.store.update('officialChats', [...this.chats.values()].map(c => ({ project: c.project, sessionId: c.sessionId, title: c.title })));
+  }
+
+  /** Shows a chat: CLI pane, or the official panel (which the official extension reopens if it was closed). */
+  async reveal(e) {
+    if (e.kind === 'official') await vscode.commands.executeCommand(OFFICIAL_OPEN, e.sessionId);
+    else e.terminal.show(false);
+  }
+
+  /** Takes a chat off the board and closes its pane. Its history stays. */
+  async closeEntry(e) {
+    if (e.kind !== 'official') return e.terminal.dispose();
+    await this.reveal(e);
+    await sleep(300);
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (tab && tab.input instanceof vscode.TabInputWebview) await vscode.window.tabGroups.close(tab);
+    this.chats.delete(e.sessionId);
+    this.saveChats();
+    this._onDidChange.fire();
   }
 
   async refreshOfficial() {
@@ -162,23 +205,33 @@ class Board {
       this.open.get(sessionId).terminal.show(false);
       return;
     }
+    if (sessionId && !opts.fork && opts.view !== 'terminal' && this.chats.has(sessionId)) {
+      await this.reveal(this.chats.get(sessionId));
+      return;
+    }
     let official = !opts.fork && (opts.view === 'official' ? this.canUseOfficial(project) : opts.view !== 'terminal' && this.prefersOfficial(project));
     const column = opts.column || (opts.mode === 'tab' ? vscode.ViewColumn.Active : await this.nextFreeColumn());
 
+    let handover;
     if (official && !this.isFirstFolder(project)) {
       // Let the official panel find this chat's history (a hard link) or tell our
       // wrapper which folder the new chat belongs to.
       if (sessionId) official = await this.native.linkTranscript(sessions.sessionFile(project, sessionId), this.firstFolder(), this.known);
-      else this.native.prepareNewChat(project, this.firstFolder(), this.known);
+      else handover = this.native.prepareNewChat(project, this.firstFolder(), this.known);
     }
     if (official) {
       // The official extension opens (or reveals) the chat with its full history in that pane;
       // our wrapper starts its Claude process in the chat's own folder.
       await vscode.commands.executeCommand(OFFICIAL_OPEN, sessionId, undefined, column);
-      if (!sessionId && !this.isFirstFolder(project) && !await this.native.waitForClaim()) {
+      if (handover && !await this.native.waitForClaim(handover)) {
         vscode.window.showWarningMessage(`The new Claude chat for ${path.basename(project)} did not start in time, so it may be running in ${path.basename(this.firstFolder())}. Close it and try again.`);
       }
       await this.waitForPane(column);
+      if (sessionId) this.trackOfficial(project, sessionId, opts.title);
+      else {
+        const known = this.known.get(sessions.pathKey(project));
+        this.awaiting.push({ project, since: Date.now(), before: new Set(known ? known.sessions.map(s => s.id) : []) });
+      }
       this._onDidChange.fire();
       return;
     }
@@ -206,7 +259,7 @@ class Board {
 
     const file = sessions.sessionFile(project, id);
     const st = sessions.activityState(file);
-    this.open.set(id, { terminal, project, sessionId: id, title, file, state: st.state === 'working' ? 'working' : 'idle',
+    this.open.set(id, { kind: 'terminal', terminal, project, sessionId: id, title, file, state: st.state === 'working' ? 'working' : 'idle',
       lastChange: Date.now(), size: st.size });
     // Terminal tabs appear asynchronously; wait so the next placement sees this pane as taken.
     for (let i = 0; i < 40 && !this.columnsByName().has(terminal.name); i++) await sleep(50);
@@ -271,6 +324,7 @@ class Board {
   async closeAll() {
     for (const e of [...this.open.values()]) e.terminal.dispose();
     this.open.clear();
+    for (const e of [...this.chats.values()]) await this.closeEntry(e);
     await applyGrid(1);
     this.save();
   }
@@ -289,10 +343,10 @@ class Board {
   }
 
   poll() {
-    if (!this.open.size) return;
+    if (!this.open.size && !this.chats.size) return;
     const notify = vscode.workspace.getConfiguration('claudeCC').get('notifyWhenDone');
     let changed = false;
-    for (const e of this.open.values()) {
+    for (const e of this.all()) {
       const st = sessions.activityState(e.file);
       const now = Date.now();
       if (st.size !== e.size) {
@@ -305,7 +359,8 @@ class Board {
       const prev = e.state;
       e.state = next;
       changed = true;
-      const focused = vscode.window.state.focused && vscode.window.activeTerminal === e.terminal;
+      // We cannot tell which official panel you are looking at, so for those only notify when VS Code is in the background.
+      const focused = vscode.window.state.focused && (e.kind === 'official' || vscode.window.activeTerminal === e.terminal);
       if (notify && !focused) {
         if (next === 'idle' && prev !== 'idle') this.notify(e, 'finished its turn');
         else if (next === 'waiting') this.notify(e, 'may be waiting for your approval');
@@ -316,19 +371,26 @@ class Board {
 
   async notify(e, what) {
     const pick = await vscode.window.showInformationMessage(`Claude (${path.basename(e.project)}): ${short(e.title)} ${what}.`, 'Show');
-    if (pick) e.terminal.show(false);
+    if (pick) this.reveal(e);
   }
 
   /** Called after a session list refresh so board labels pick up real titles. */
   updateTitles(projects) {
     this.known = projects;
     let changed = false;
-    for (const e of this.open.values()) {
+    // New official chats: the first new conversation in that project is the one we opened.
+    this.awaiting = this.awaiting.filter(a => {
+      const p = projects.get(sessions.pathKey(a.project));
+      const fresh = p && p.sessions.filter(s => !a.before.has(s.id) && !this.entry(s.id)).sort((x, y) => x.mtime - y.mtime)[0];
+      if (fresh) { this.trackOfficial(a.project, fresh.id, fresh.title); return false; }
+      return Date.now() - a.since < 10 * 60 * 1000;
+    });
+    for (const e of this.all()) {
       const p = projects.get(sessions.pathKey(e.project));
       const m = p && p.sessions.find(s => s.id === e.sessionId);
       if (m && m.title !== e.title) { e.title = m.title; changed = true; }
     }
-    if (changed) this._onDidChange.fire();
+    if (changed) { this.saveChats(); this._onDidChange.fire(); }
   }
 
   async sendToSessions(ids, text) {

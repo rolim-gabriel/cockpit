@@ -94,7 +94,7 @@ class ProjectsProvider {
     if (el.kind === 'project') {
       const p = el.project;
       const count = this.project(p.path).sessions.length;
-      const live = [...this.board.open.values()].filter(e => sessions.pathKey(e.project) === sessions.pathKey(p.path)).length;
+      const live = this.board.all().filter(e => sessions.pathKey(e.project) === sessions.pathKey(p.path)).length;
       const t = new vscode.TreeItem(path.basename(p.path) || p.path,
         p.pinned ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
       t.id = 'p:' + sessions.pathKey(p.path) + (p.pinned ? ':pin' : '');
@@ -111,7 +111,7 @@ class ProjectsProvider {
       return t;
     }
     const s = el.session;
-    const open = this.board.open.get(s.id);
+    const open = this.board.entry(s.id);
     const t = new vscode.TreeItem(s.title);
     t.id = 's:' + s.id;
     t.description = (open ? `● ${STATE_ICON[open.state][2]} · ` : '') + ago(s.mtime);
@@ -146,8 +146,8 @@ class BoardProvider {
   getChildren(el) {
     if (el) return [];
     const cols = this.board.columnsByName();
-    return [...this.board.open.values()]
-      .map(e => ({ entry: e, column: cols.get(e.terminal.name) }))
+    return this.board.all()
+      .map(e => ({ entry: e, column: e.kind === 'terminal' ? cols.get(e.terminal.name) : undefined }))
       .sort((a, b) => (a.column || 99) - (b.column || 99));
   }
 
