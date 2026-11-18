@@ -10,6 +10,7 @@ exports.run = async () => {
   const tmp = process.env.CCC_TMP;
   const ext = vscode.extensions.all.find(e => e.id.endsWith('claude-command-center'));
   const { board, projects } = await ext.activate();
+  await projects.refreshAsync(); // the first scan runs in the background
 
   const work = path.join(tmp, 'work');
   const found = [...projects.projects.values()].filter(p => p.path !== work);

@@ -8,8 +8,11 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 
-const HEAD_BYTES = 256 * 1024;
+// Most of what we need (cwd, first prompt) is in the first records; read more only if not.
+const HEAD_BYTES = 64 * 1024;
+const MAX_HEAD_BYTES = 1024 * 1024;
 const TAIL_BYTES = 64 * 1024;
+const KEEP_TEXT = 600; // prompt text kept in the cache (tooltips show 400)
 
 const metaCache = new Map(); // file -> { key, meta }
 
@@ -84,16 +87,7 @@ function titleFrom(records) {
   return title;
 }
 
-function readMeta(file, stat) {
-  const key = `${stat.size}:${stat.mtimeMs}`;
-  const cached = metaCache.get(file);
-  if (cached && cached.key === key) return cached.meta;
-
-  const head = parseLines(readSlice(file, 0, Math.min(HEAD_BYTES, stat.size)), false);
-  const tail = stat.size > HEAD_BYTES
-    ? parseLines(readSlice(file, stat.size - TAIL_BYTES, TAIL_BYTES), true)
-    : [];
-
+function metaFromRecords(file, stat, head, tail) {
   let cwd = '';
   let firstPrompt = '';
   let entrypoint = '';
@@ -115,27 +109,115 @@ function readMeta(file, stat) {
     if (r.type === 'assistant') hasConversation = true;
   }
   const custom = titleFrom(head.concat(tail));
-
-  const meta = {
+  return {
     id: path.basename(file, '.jsonl'),
     file,
     cwd,
     title: oneLine(custom || firstPrompt || lastPrompt || '(untitled)'),
-    firstPrompt,
-    lastPrompt,
+    firstPrompt: firstPrompt.slice(0, KEEP_TEXT),
+    lastPrompt: lastPrompt.slice(0, KEEP_TEXT),
     entrypoint,
     gitBranch,
     mtime: stat.mtimeMs,
     size: stat.size,
     hasConversation,
   };
+}
+
+const headIsEnough = recs => recs.some(r => r.cwd) && recs.some(r => r.type === 'user' && userText(r)) && recs.some(r => r.type === 'assistant');
+
+function readMeta(file, stat) {
+  const key = `${stat.size}:${stat.mtimeMs}`;
+  const cached = metaCache.get(file);
+  if (cached && cached.key === key) return cached.meta;
+  let len = Math.min(HEAD_BYTES, stat.size);
+  let head = parseLines(readSlice(file, 0, len), false);
+  while (!headIsEnough(head) && len < stat.size && len < MAX_HEAD_BYTES) {
+    len = Math.min(len * 4, MAX_HEAD_BYTES, stat.size);
+    head = parseLines(readSlice(file, 0, len), false);
+  }
+  const tail = stat.size > len ? parseLines(readSlice(file, stat.size - TAIL_BYTES, TAIL_BYTES), true) : [];
+  const meta = metaFromRecords(file, stat, head, tail);
   metaCache.set(file, { key, meta });
   return meta;
+}
+
+async function readSliceAsync(file, start, length) {
+  const fh = await fs.promises.open(file, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const { bytesRead } = await fh.read(buf, 0, length, start);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await fh.close();
+  }
+}
+
+async function readMetaAsync(file, stat) {
+  const key = `${stat.size}:${stat.mtimeMs}`;
+  const cached = metaCache.get(file);
+  if (cached && cached.key === key) return cached.meta;
+  let len = Math.min(HEAD_BYTES, stat.size);
+  let head = parseLines(await readSliceAsync(file, 0, len), false);
+  while (!headIsEnough(head) && len < stat.size && len < MAX_HEAD_BYTES) {
+    len = Math.min(len * 4, MAX_HEAD_BYTES, stat.size);
+    head = parseLines(await readSliceAsync(file, 0, len), false);
+  }
+  const tail = stat.size > len ? parseLines(await readSliceAsync(file, stat.size - TAIL_BYTES, TAIL_BYTES), true) : [];
+  const meta = metaFromRecords(file, stat, head, tail);
+  metaCache.set(file, { key, meta });
+  return meta;
+}
+
+/** The metadata cache survives restarts, so only new or changed transcripts are read. */
+function loadCache(file) {
+  try {
+    for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')))) metaCache.set(k, v);
+  } catch { /* first run */ }
+}
+
+function saveCache(file) {
+  try {
+    const live = {};
+    for (const [k, v] of metaCache) if (v.seen) live[k] = { key: v.key, meta: v.meta };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file + '.tmp', JSON.stringify(live));
+    fs.renameSync(file + '.tmp', file);
+  } catch { /* cache only */ }
 }
 
 function oneLine(s) {
   s = s.replace(/\s+/g, ' ').trim();
   return s.length > 90 ? s.slice(0, 87) + '...' : s;
+}
+
+/** Groups session metadata by project; a chat with two names (linked) is listed once. */
+function group(metas) {
+  const projects = new Map();
+  const byId = new Map();
+  for (const meta of metas) {
+    if (!meta || !meta.cwd || !meta.hasConversation) continue;
+    // A chat can have two names (Claude Command Center links it into another history folder
+    // for the official panel). List it once, by the name in its own project's folder.
+    const prev = byId.get(meta.id);
+    if (prev) {
+      if (path.basename(path.dirname(prev.file)) === encodeProjectPath(prev.cwd)) continue;
+      if (path.basename(path.dirname(meta.file)) !== encodeProjectPath(meta.cwd)) continue;
+      const pk = projects.get(pathKey(prev.cwd));
+      if (pk) pk.sessions = pk.sessions.filter(s => s !== prev);
+    }
+    byId.set(meta.id, meta);
+    const k = pathKey(meta.cwd);
+    if (!projects.has(k)) projects.set(k, { path: meta.cwd, sessions: [] });
+    projects.get(k).sessions.push(meta);
+  }
+  for (const p of projects.values()) p.sessions.sort((a, b) => b.mtime - a.mtime);
+  return projects;
+}
+
+function markSeen(file) {
+  const c = metaCache.get(file);
+  if (c) c.seen = true;
 }
 
 /**
@@ -144,40 +226,51 @@ function oneLine(s) {
  */
 function scanAll() {
   const root = projectsDir();
-  const projects = new Map();
-  const byId = new Map();
+  const metas = [];
   let dirs = [];
-  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return projects; }
-
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return new Map(); }
   for (const d of dirs) {
     const dir = path.join(root, d.name);
     let files = [];
     try { files = fs.readdirSync(dir).filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-')); } catch { continue; }
     for (const f of files) {
       const file = path.join(dir, f);
-      let stat;
-      try { stat = fs.statSync(file); } catch { continue; }
-      if (!stat.isFile() || stat.size === 0) continue;
-      let meta;
-      try { meta = readMeta(file, stat); } catch { continue; }
-      if (!meta.cwd || !meta.hasConversation) continue;
-      // A chat can have two names (Claude Command Center links it into another history folder
-      // for the official panel). List it once, by the name in its own project's folder.
-      const prev = byId.get(meta.id);
-      if (prev) {
-        if (path.basename(path.dirname(prev.file)) === encodeProjectPath(prev.cwd)) continue;
-        if (path.basename(dir) !== encodeProjectPath(meta.cwd)) continue;
-        const pk = projects.get(pathKey(prev.cwd));
-        if (pk) pk.sessions = pk.sessions.filter(s => s !== prev);
-      }
-      byId.set(meta.id, meta);
-      const k = pathKey(meta.cwd);
-      if (!projects.has(k)) projects.set(k, { path: meta.cwd, sessions: [] });
-      projects.get(k).sessions.push(meta);
+      try {
+        const stat = fs.statSync(file);
+        if (!stat.isFile() || stat.size === 0) continue;
+        metas.push(readMeta(file, stat));
+        markSeen(file);
+      } catch { /* unreadable: skip */ }
     }
   }
-  for (const p of projects.values()) p.sessions.sort((a, b) => b.mtime - a.mtime);
-  return projects;
+  return group(metas);
+}
+
+/** Same as scanAll, without blocking VS Code: reads in small batches and yields in between. */
+async function scanAllAsync() {
+  const root = projectsDir();
+  const metas = [];
+  let dirs = [];
+  try { dirs = (await fs.promises.readdir(root, { withFileTypes: true })).filter(d => d.isDirectory()); } catch { return new Map(); }
+  for (const d of dirs) {
+    const dir = path.join(root, d.name);
+    let files = [];
+    try { files = (await fs.promises.readdir(dir)).filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-')); } catch { continue; }
+    for (let i = 0; i < files.length; i += 16) {
+      const batch = await Promise.all(files.slice(i, i + 16).map(async f => {
+        const file = path.join(dir, f);
+        try {
+          const stat = await fs.promises.stat(file);
+          if (!stat.isFile() || stat.size === 0) return undefined;
+          const meta = await readMetaAsync(file, stat);
+          markSeen(file);
+          return meta;
+        } catch { return undefined; }
+      }));
+      metas.push(...batch);
+    }
+  }
+  return group(metas);
 }
 
 /** Where a session's transcript will live (works for sessions not yet written). */
@@ -248,4 +341,4 @@ function transcriptMarkdown(meta) {
   return out.join('\n');
 }
 
-module.exports = { scanAll, pathKey, sessionFile, activityState, transcriptMarkdown, dataDir, oneLine, encodeProjectPath };
+module.exports = { scanAll, scanAllAsync, loadCache, saveCache, pathKey, sessionFile, activityState, transcriptMarkdown, dataDir, oneLine, encodeProjectPath };

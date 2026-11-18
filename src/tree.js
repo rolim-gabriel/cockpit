@@ -42,7 +42,23 @@ class ProjectsProvider {
   }
 
   refresh() {
-    this.projects = sessions.scanAll();
+    this.apply(sessions.scanAll());
+  }
+
+  /** Background refresh: never blocks VS Code. Calls made while one runs are merged into one more pass. */
+  refreshAsync() {
+    if (this.running) { this.again = true; return this.running; }
+    this.running = (async () => {
+      do {
+        this.again = false;
+        this.apply(await sessions.scanAllAsync());
+      } while (this.again);
+    })().finally(() => { this.running = undefined; });
+    return this.running;
+  }
+
+  apply(projects) {
+    this.projects = projects;
     this.board.updateTitles(this.projects);
     this._onDidChange.fire();
   }

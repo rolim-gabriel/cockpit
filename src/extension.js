@@ -9,11 +9,18 @@ const { NativeEverywhere } = require('./native');
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
+  // Transcript metadata cache: after the first run only new or changed chats are read.
+  const cacheFile = path.join(context.globalStorageUri.fsPath, 'sessions-cache.json');
+  sessions.loadCache(cacheFile);
+  let cacheTimer;
+  const saveCacheSoon = () => { clearTimeout(cacheTimer); cacheTimer = setTimeout(() => sessions.saveCache(cacheFile), 10000); };
+  context.subscriptions.push({ dispose: () => { clearTimeout(cacheTimer); sessions.saveCache(cacheFile); } });
+
   const native = new NativeEverywhere(context);
   const board = new Board(context, native);
   const projects = new ProjectsProvider(context, board);
   const boardView = new BoardProvider(board);
-  projects.refresh();
+  projects.refreshAsync().then(saveCacheSoon);
 
   // Official panel everywhere: on by default when the official extension is installed.
   const syncEverywhere = async () => {
@@ -28,7 +35,7 @@ function activate(context) {
       const n = await native.disable();
       vscode.window.showInformationMessage(`Claude Command Center: official panel limited to the first folder again (${n} history link${n === 1 ? '' : 's'} removed).`);
     }
-    projects.refresh();
+    projects.refreshAsync();
   };
   syncEverywhere();
   context.subscriptions.push(
@@ -52,10 +59,11 @@ function activate(context) {
     const now = Date.now();
     if (!firstPending) firstPending = now;
     const wait = Math.max(0, Math.min(1500, firstPending + 5000 - now));
-    refreshTimer = setTimeout(() => {
+    refreshTimer = setTimeout(async () => {
       firstPending = 0;
-      projects.refresh();
+      await projects.refreshAsync();
       native.sync(projects.projects).catch(() => {});
+      saveCacheSoon();
     }, wait);
   };
   const watcher = vscode.workspace.createFileSystemWatcher(
@@ -137,8 +145,8 @@ function activate(context) {
     const p = projectOf(el);
     if (p) await projects.setPinned(projects.pinned.filter(x => sessions.pathKey(x) !== sessions.pathKey(p)));
   });
-  reg('claudeCC.refresh', () => projects.refresh());
-  reg('claudeCC._showAll', p => { projects.expanded.add(sessions.pathKey(p)); projects.refresh(); });
+  reg('claudeCC.refresh', () => projects.refreshAsync());
+  reg('claudeCC._showAll', p => { projects.expanded.add(sessions.pathKey(p)); projects.refreshAsync(); });
   // A saved workspace is what VS Code reopens with every tab in its pane, official Claude chats included.
   reg('claudeCC.saveCommandCenter', async () => {
     const folders = commandCenterFolders((vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath), projects.pinned);

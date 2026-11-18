@@ -106,7 +106,7 @@ panel). Two programs writing to one conversation can split its history into two 
 ## Install
 
 ```
-code --install-extension claude-command-center-0.6.1.vsix
+code --install-extension claude-command-center-0.6.2.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 
