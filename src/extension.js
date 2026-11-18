@@ -191,7 +191,18 @@ function activate(context) {
     await board.openSession(el.session.cwd, el.session.id, { title: el.session.title });
   });
   reg('claudeCC.openSessionNewPane', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, mode: 'tab' }));
-  reg('claudeCC.openInTerminal', el => el && board.openSession(el.session.cwd, el.session.id, { title: el.session.title, view: 'terminal' }));
+  reg('claudeCC.openInTerminal', async el => {
+    if (!el) return;
+    const official = board.chats.get(el.session.id);
+    if (official) {
+      // Two programs writing to one chat would split its history.
+      const ok = await vscode.window.showWarningMessage('This chat is open in the official Claude Code panel. Close it there and open it in the CLI?', { modal: true }, 'Move to CLI');
+      if (!ok) return;
+      await board.closeEntry(official);
+      await new Promise(r => setTimeout(r, 1500)); // let its Claude process exit
+    }
+    await board.openSession(el.session.cwd, el.session.id, { title: el.session.title, view: 'terminal' });
+  });
   reg('claudeCC.newTerminalSession', async el => {
     const p = projectOf(el) || await pickProject('Start a new Claude CLI session in...');
     if (p) await board.openSession(p, undefined, { view: 'terminal' });
@@ -273,6 +284,14 @@ function activate(context) {
     const text = await vscode.window.showInputBox({ prompt: `Prompt for ${picks.length} session(s)`, placeHolder: 'e.g. run the tests and summarise failures' });
     if (text) await board.sendToSessions(picks.map(p => p.id), text);
   });
+
+  // One-time pointer for new users.
+  if (!context.globalState.get('welcomed')) {
+    context.globalState.update('welcomed', true);
+    vscode.window.showInformationMessage(
+      'Claude Command Center: open your Claude chats side by side from its sidebar. Then use "Save Command Center" to reopen them all later.',
+      'Show Sidebar').then(pick => { if (pick) vscode.commands.executeCommand('workbench.view.extension.claudeCC'); });
+  }
 
   // ---- restore on startup -----------------------------------------------
   const saved = board.store.get('board');

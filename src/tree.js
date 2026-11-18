@@ -171,8 +171,8 @@ class BoardProvider {
     const t = new vscode.TreeItem(`${path.basename(e.project)}: ${e.title}`);
     const [icon, color, label] = STATE_ICON[e.state];
     t.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
-    t.description = `${column ? `pane ${column} · ` : ''}${label}`;
-    t.tooltip = `${e.project}\nSession ${e.sessionId}`;
+    t.description = `${e.kind === 'official' ? 'chat' : 'CLI'}${column ? ` · pane ${column}` : ''} · ${label}`;
+    t.tooltip = `${e.kind === 'official' ? 'Official Claude Code panel' : 'Claude Code CLI'} in ${e.project}\nSession ${e.sessionId}\nClick to show it`;
     t.contextValue = 'boardItem';
     t.command = { command: 'claudeCC.focusBoardItem', title: 'Focus', arguments: [e.sessionId] };
     t.id = 'b:' + e.sessionId;

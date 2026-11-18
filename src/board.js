@@ -8,6 +8,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const sessions = require('./sessions');
 
 const COLORS = ['terminal.ansiBlue', 'terminal.ansiGreen', 'terminal.ansiMagenta', 'terminal.ansiCyan',
@@ -238,7 +239,7 @@ class Board {
 
     const cfg = vscode.workspace.getConfiguration('claudeCC');
     const id = sessionId && !opts.fork ? sessionId : crypto.randomUUID();
-    let cmd = quoteCmd(cfg.get('claudeCommand') || 'claude');
+    let cmd = quoteCmd(resolveClaudeCommand(cfg.get('claudeCommand') || 'claude'));
     if (opts.fork) cmd += ` --resume ${sessionId} --fork-session --session-id ${id}`;
     else if (sessionId) cmd += ` --resume ${id}`;
     else cmd += ` --session-id ${id}`;
@@ -411,8 +412,29 @@ function hash(s) {
   return h;
 }
 
-function quoteCmd(c) {
-  return /\s/.test(c) && !/^["']/.test(c) ? `"${c}"` : c;
+/**
+ * The CLI to run in terminal panes: the configured command if it can be found, otherwise the
+ * Claude Code binary that ships inside the official VS Code extension (for machines with no
+ * separately installed CLI).
+ */
+function resolveClaudeCommand(cmd) {
+  if (cmd !== 'claude' || onPath('claude')) return cmd;
+  const ext = vscode.extensions.getExtension('anthropic.claude-code');
+  if (!ext) return cmd;
+  const bundled = path.join(ext.extensionPath, 'resources', 'native-binary', process.platform === 'win32' ? 'claude.exe' : 'claude');
+  return fs.existsSync(bundled) ? bundled : cmd;
 }
 
-module.exports = { Board, gridShape };
+function onPath(name) {
+  const exts = process.platform === 'win32' ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : [''];
+  return (process.env.PATH || '').split(path.delimiter).some(dir =>
+    dir && exts.some(e => { try { return fs.statSync(path.join(dir, name + e.toLowerCase())).isFile() || fs.statSync(path.join(dir, name + e)).isFile(); } catch { return false; } }));
+}
+
+function quoteCmd(c) {
+  if (!/\s/.test(c) || /^["'&]/.test(c)) return c;
+  // PowerShell (the default Windows terminal) runs a quoted path only after the call operator.
+  return process.platform === 'win32' ? `& "${c}"` : `"${c}"`;
+}
+
+module.exports = { Board, gridShape, resolveClaudeCommand };

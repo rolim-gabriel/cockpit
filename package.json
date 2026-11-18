@@ -2,7 +2,7 @@
   "name": "claude-command-center",
   "displayName": "Claude Command Center",
   "description": "Native Claude Code sessions for many projects side by side in one VS Code window: a resizable grid of official Claude Code chat panels and Claude Code CLI panes, each in its own project folder and resumed with its full history.",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -41,7 +41,7 @@
         },
         {
           "id": "claudeCC.board",
-          "name": "Board (CLI panes)"
+          "name": "Open Chats"
         }
       ]
     },
@@ -52,7 +52,7 @@
       },
       {
         "view": "claudeCC.board",
-        "contents": "No sessions open on the board.\n[Open Sessions as Grid](command:claudeCC.openGrid)\n[Restore Last Board](command:claudeCC.restoreBoard)"
+        "contents": "No chats open yet.\nClick a chat in Projects & Sessions, or:\n[Open Several Chats as a Grid](command:claudeCC.openGrid)\n[Restore Last CLI Panes](command:claudeCC.restoreBoard)"
       }
     ],
     "commands": [
@@ -157,7 +157,7 @@
       },
       {
         "command": "claudeCC.closeBoard",
-        "title": "Close All Board Sessions",
+        "title": "Close All Chats on the Board",
         "category": "Claude CC",
         "icon": "$(close-all)"
       },
@@ -186,7 +186,7 @@
       },
       {
         "command": "claudeCC.closeBoardItem",
-        "title": "Close Session",
+        "title": "Close Chat (history is kept)",
         "category": "Claude CC",
         "icon": "$(close)"
       },
@@ -473,7 +473,7 @@
         "claudeCC.claudeCommand": {
           "type": "string",
           "default": "claude",
-          "description": "Command used to start Claude Code. Use a full path if 'claude' is not on PATH."
+          "description": "Command used for CLI panes. With the default 'claude', if no Claude Code CLI is installed, the binary bundled with the official Claude Code extension is used."
         },
         "claudeCC.extraArgs": {
           "type": "string",

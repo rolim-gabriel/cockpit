@@ -77,7 +77,7 @@ Things to know:
    - `▷` on a project: resume its most recent chat
    - Right-click a chat: open it in the CLI, open it as a tab in the current pane, fork it, preview the transcript, or copy its resume command
 4. **Open Sessions as Grid...** (layout icon): pick several chats or new sessions at once, one pane each.
-5. **Board** view: change the layout, **Tidy** (one tab per pane), **Send prompt to several CLI sessions**, restore the last board, close all.
+5. **Open Chats** view: every chat on the board with its status (official panel or CLI); click to jump to it. Change the layout, **Tidy** (one tab per pane), **Send prompt to several CLI sessions**, restore the last board, close all.
 
 Shortcuts: `Ctrl+Alt+K` jump to a session, `Ctrl+Alt+M` maximize or restore the current pane, `Ctrl+Alt+B` send a prompt to several sessions.
 
@@ -106,7 +106,7 @@ panel). Two programs writing to one conversation can split its history into two 
 ## Install
 
 ```
-code --install-extension claude-command-center-0.6.2.vsix
+code --install-extension claude-command-center-0.6.3.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 

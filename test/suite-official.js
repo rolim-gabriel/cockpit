@@ -36,6 +36,15 @@ exports.run = async () => {
   assert.ok(board.canUseOfficial(dirs.notes), 'official panel allowed for another project');
   projects.refresh();
 
+  // 1b. Without a separately installed CLI, CLI panes use the official extension's bundled binary.
+  const { resolveClaudeCommand } = require('../src/board');
+  const savedPath = process.env.PATH;
+  process.env.PATH = '/nonexistent';
+  const resolved = resolveClaudeCommand('claude');
+  process.env.PATH = savedPath;
+  assert.ok(resolved.includes('anthropic.claude-code') && fs.existsSync(resolved), 'falls back to bundled binary: ' + resolved);
+  assert.strictEqual(resolveClaudeCommand('claude'), 'claude', 'uses the installed CLI when there is one');
+
   // 2. Existing chat of another project: official panel, history, runs in its own folder.
   await board.openSession(dirs.notes, sid, { title: 'code word' });
   const realFile = projects.project(dirs.notes).sessions.find(s => s.id === sid).file;
@@ -86,8 +95,8 @@ exports.run = async () => {
   console.log('step 4b ok: back-to-back new chats each in their own folder');
   if (process.env.CCC_SHOT) {
     await sleep(8000);
-    await vscode.commands.executeCommand('workbench.action.closeSidebar');
-    await sleep(1500);
+    await vscode.commands.executeCommand('workbench.view.extension.claudeCC');
+    await sleep(2500);
     execSync(`import -window root ${process.env.CCC_SHOT.replace('.png', '-grid.png')}`);
   }
 
