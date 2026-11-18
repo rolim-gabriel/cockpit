@@ -67,6 +67,17 @@ class ProjectsProvider {
     return this.projects.get(sessions.pathKey(p)) || { path: p, sessions: [] };
   }
 
+  /**
+   * Display name of a project folder: its own name, plus its parent folder's name when another
+   * known project has the same name (e.g. a OneDrive copy and a local copy).
+   */
+  nameOf(p) {
+    const base = path.basename(p) || p;
+    const same = [...this.projects.values()].map(x => x.path).concat(this.pinned)
+      .filter(x => path.basename(x).toLowerCase() === base.toLowerCase() && sessions.pathKey(x) !== sessions.pathKey(p));
+    return same.length ? `${base} (${path.basename(path.dirname(p))})` : base;
+  }
+
   /** All known projects: pinned first (in pin order), then discovered by recency. */
   allProjects() {
     const pinnedKeys = new Set(this.pinned.map(sessions.pathKey));
@@ -111,7 +122,7 @@ class ProjectsProvider {
       const p = el.project;
       const count = this.project(p.path).sessions.length;
       const live = this.board.all().filter(e => sessions.pathKey(e.project) === sessions.pathKey(p.path)).length;
-      const t = new vscode.TreeItem(path.basename(p.path) || p.path,
+      const t = new vscode.TreeItem(this.nameOf(p.path),
         p.pinned ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
       t.id = 'p:' + sessions.pathKey(p.path) + (p.pinned ? ':pin' : '');
       t.description = `${count} chat${count === 1 ? '' : 's'}${live ? ` · ${live} open` : ''}`;
@@ -168,7 +179,7 @@ class BoardProvider {
   }
 
   getTreeItem({ entry: e, column }) {
-    const t = new vscode.TreeItem(`${path.basename(e.project)}: ${e.title}`);
+    const t = new vscode.TreeItem(`${this.nameOf ? this.nameOf(e.project) : path.basename(e.project)}: ${e.title}`);
     const [icon, color, label] = STATE_ICON[e.state];
     t.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
     t.description = `${e.kind === 'official' ? 'chat' : 'CLI'}${column ? ` · pane ${column}` : ''} · ${label}`;

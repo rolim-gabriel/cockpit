@@ -51,6 +51,9 @@ Safety:
 - New-chat handovers are per request and per window, so several windows or several new chats at once never mix up folders.
 
 Things to know:
+- To start a new chat for a project, use **+** on that project in the sidebar (or **Open Sessions as Grid**). The
+  **+** (new conversation) button *inside* an official panel starts the new chat in the window's first folder,
+  because the panel does not say which project it is for.
 - Chats linked this way also appear in the first folder's chat list in the official panel, and in `claude --resume`
   run from the first folder in a plain terminal. Resuming one from a plain terminal there would run it in the first
   folder; open it from Claude Command Center (or `cd` to its project first).
@@ -106,7 +109,7 @@ panel). Two programs writing to one conversation can split its history into two 
 ## Install
 
 ```
-code --install-extension claude-command-center-0.6.3.vsix
+code --install-extension claude-command-center-0.6.4.vsix
 ```
 Or in VS Code: Extensions view > `...` > **Install from VSIX...**
 

@@ -20,6 +20,7 @@ function activate(context) {
   const board = new Board(context, native);
   const projects = new ProjectsProvider(context, board);
   const boardView = new BoardProvider(board);
+  boardView.nameOf = p => projects.nameOf(p);
   projects.refreshAsync().then(saveCacheSoon);
 
   // Official panel everywhere: on by default when the official extension is installed.
@@ -98,7 +99,7 @@ function activate(context) {
   async function pickProject(placeHolder) {
     const { pinned, discovered } = projects.allProjects();
     const items = [...pinned, ...discovered].map(p => ({
-      label: path.basename(p.path) || p.path, description: p.pinned ? 'pinned' : '', detail: p.path, path: p.path,
+      label: projects.nameOf(p.path), description: p.pinned ? 'pinned' : '', detail: p.path, path: p.path,
     }));
     items.push({ label: '$(new-folder) Browse for a folder...', browse: true });
     const pick = await vscode.window.showQuickPick(items, { placeHolder, matchOnDetail: true });
@@ -116,7 +117,7 @@ function activate(context) {
     all.sort((a, b) => b.mtime - a.mtime);
     return all.slice(0, limit).map(s => ({
       label: s.title,
-      description: `${path.basename(s.cwd)} · ${ago(s.mtime)}${board.entry(s.id) ? ' · open' : ''}`,
+      description: `${projects.nameOf(s.cwd)} · ${ago(s.mtime)}${board.entry(s.id) ? ' · open' : ''}`,
       detail: s.cwd,
       session: s,
     }));
@@ -124,7 +125,7 @@ function activate(context) {
 
   const openPicks = (placeHolder, canPickMany) => vscode.window.showQuickPick(
     board.all().filter(e => canPickMany ? e.kind === 'terminal' : true).map(e => ({
-      label: `${path.basename(e.project)}: ${e.title}`, description: e.state, id: e.sessionId, picked: canPickMany,
+      label: `${projects.nameOf(e.project)}: ${e.title}`, description: e.state, id: e.sessionId, picked: canPickMany,
     })), { placeHolder, canPickMany });
 
   const reg = (id, fn) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
@@ -238,7 +239,7 @@ function activate(context) {
     const pinned = projects.allProjects().pinned;
     const items = [
       ...(pinned.length ? [{ label: 'New sessions', kind: vscode.QuickPickItemKind.Separator }] : []),
-      ...pinned.map(p => ({ label: `$(add) New session in ${path.basename(p.path)}`, detail: p.path, newIn: p.path })),
+      ...pinned.map(p => ({ label: `$(add) New session in ${projects.nameOf(p.path)}`, detail: p.path, newIn: p.path })),
       { label: 'Recent conversations', kind: vscode.QuickPickItemKind.Separator },
       ...sessionPickItems(80).filter(i => !board.entry(i.session.id)),
     ];

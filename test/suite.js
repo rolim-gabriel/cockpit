@@ -112,5 +112,12 @@ exports.run = async () => {
   const saved2 = JSON.parse(fs.readFileSync(ws, 'utf8'));
   assert.deepStrictEqual(saved2.folders.map(f => f.path), [work, found[0].path, found[1].path], 'command center folders');
   assert.strictEqual(saved2.settings['editor.fontSize'], 15, 'existing workspace settings kept');
+  // Same-named projects in different places are told apart by their parent folder.
+  const twinA = path.join(tmp, 'OneDrive', 'shop'), twinB = path.join(tmp, 'Local', 'shop');
+  await projects.setPinned([twinA, twinB]);
+  assert.strictEqual(projects.nameOf(twinA), 'shop (OneDrive)');
+  assert.strictEqual(projects.nameOf(twinB), 'shop (Local)');
+  assert.strictEqual(projects.nameOf(found[0].path), path.basename(found[0].path), 'unique names stay short');
+  await projects.setPinned([]);
   console.log('all assertions passed');
 };

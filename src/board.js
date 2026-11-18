@@ -386,6 +386,10 @@ class Board {
       if (fresh) { this.trackOfficial(a.project, fresh.id, fresh.title); return false; }
       return Date.now() - a.since < 10 * 60 * 1000;
     });
+    // Official chats whose history was deleted leave the board.
+    for (const [id, c] of this.chats) {
+      if (!fs.existsSync(c.file)) { this.chats.delete(id); changed = true; }
+    }
     for (const e of this.all()) {
       const p = projects.get(sessions.pathKey(e.project));
       const m = p && p.sessions.find(s => s.id === e.sessionId);
