@@ -29,8 +29,9 @@ const env = {
   CCC_TMP: tmp, CCC_SID: sid, CCC_DIRS: JSON.stringify(dirs), CCC_SHOT: shot || '',
   CLAUDE_CC_LOG: path.join(tmp, 'wrapper.log'),
   CLAUDE_CC_STATE_DIR: path.join(tmp, 'state'),
-  // The marketplace package may carry another platform's Claude binary; run the installed CLI instead.
-  CLAUDE_CC_EXEC: 'claude',
+  // Set CCC_EXEC=claude to run the installed CLI instead of the official extension's bundled binary
+  // (needed when the extension package was built for another platform).
+  ...(process.env.CCC_EXEC ? { CLAUDE_CC_EXEC: process.env.CCC_EXEC } : {}),
 };
 Object.assign(process.env, env); // inherited by VS Code, the official extension and our wrapper
 

@@ -34,7 +34,8 @@ fs.writeFileSync(path.join(user, 'User', 'settings.json'), JSON.stringify({ 'cla
   'workbench.startupEditor': 'none', 'workbench.secondarySideBar.defaultVisibility': 'hidden', 'security.workspace.trust.enabled': false }));
 const log = path.join(tmp, 'wrapper.log'), out = path.join(tmp, 'out.txt');
 const env = { ...process.env, CCC_DIRS: JSON.stringify(dirs), CCC_SIDS: JSON.stringify(sids), CCC_OUT: out, CCC_SHOT: shot || path.join(tmp, 'shot.png'),
-  CLAUDE_CC_LOG: log, CLAUDE_CC_STATE_DIR: path.join(tmp, 'state'), CLAUDE_CC_EXEC: 'claude' };
+  CLAUDE_CC_LOG: log, CLAUDE_CC_STATE_DIR: path.join(tmp, 'state'),
+  ...(process.env.CCC_EXEC ? { CLAUDE_CC_EXEC: process.env.CCC_EXEC } : {}) }; // CCC_EXEC=claude: installed CLI instead of the bundled binary
 const launch = phase => spawnSync(code, ['--no-sandbox', '--user-data-dir', user, '--extensions-dir', exts, ws],
   { env: { ...env, CCC_PHASE: phase }, timeout: 240000, stdio: 'ignore' });
 const launches = () => fs.readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(l => l.args.includes('--input-format'));
