@@ -19,6 +19,17 @@ projects.forEach((p, i) => {
   ];
   fs.writeFileSync(path.join(dir, id + '.jsonl'), lines.map(l => JSON.stringify(l)).join('\n') + '\n');
 });
+// A conversation that belongs to the window's first folder (the only one the official panel can host).
+{
+  const work = path.join(tmp, 'work');
+  const dir = path.join(data, 'projects', work.replace(/[^a-zA-Z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  const id = '0000000f-0000-4000-8000-000000000000';
+  fs.writeFileSync(path.join(dir, id + '.jsonl'), [
+    { type: 'user', cwd: work, sessionId: id, message: { role: 'user', content: 'Plan the release' } },
+    { type: 'assistant', cwd: work, sessionId: id, message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] } },
+  ].map(l => JSON.stringify(l)).join('\n') + '\n');
+}
 const log = path.join(tmp, 'claude-calls.log');
 const fake = path.join(tmp, 'fakeclaude');
 fs.writeFileSync(fake, `#!/bin/sh\necho "$PWD :: $*" >> ${log}\necho "fake claude $*"\nsleep 600\n`, { mode: 0o755 });

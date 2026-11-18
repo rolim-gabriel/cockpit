@@ -38,17 +38,44 @@ class ProjectsProvider {
 
   async setPinned(list) {
     await this.context.globalState.update('pinnedProjects', list);
-    this.refresh();
+    await this.refreshAsync();
   }
 
   refresh() {
-    this.projects = sessions.scanAll();
+    this.apply(sessions.scanAll());
+  }
+
+  /** Background refresh: never blocks VS Code. Calls made while one runs are merged into one more pass. */
+  refreshAsync() {
+    if (this.running) { this.again = true; return this.running; }
+    this.running = (async () => {
+      do {
+        this.again = false;
+        try { this.apply(await sessions.scanAllAsync()); } catch (err) { console.error('Claude Command Center: refresh failed', err); }
+      } while (this.again);
+    })().finally(() => { this.running = undefined; });
+    return this.running;
+  }
+
+  apply(projects) {
+    this.projects = projects;
     this.board.updateTitles(this.projects);
     this._onDidChange.fire();
   }
 
   project(p) {
     return this.projects.get(sessions.pathKey(p)) || { path: p, sessions: [] };
+  }
+
+  /**
+   * Display name of a project folder: its own name, plus its parent folder's name when another
+   * known project has the same name (e.g. a OneDrive copy and a local copy).
+   */
+  nameOf(p) {
+    const base = path.basename(p) || p;
+    const same = [...this.projects.values()].map(x => x.path).concat(this.pinned)
+      .filter(x => path.basename(x).toLowerCase() === base.toLowerCase() && sessions.pathKey(x) !== sessions.pathKey(p));
+    return same.length ? `${base} (${path.basename(path.dirname(p))})` : base;
   }
 
   /** All known projects: pinned first (in pin order), then discovered by recency. */
@@ -94,8 +121,8 @@ class ProjectsProvider {
     if (el.kind === 'project') {
       const p = el.project;
       const count = this.project(p.path).sessions.length;
-      const live = [...this.board.open.values()].filter(e => sessions.pathKey(e.project) === sessions.pathKey(p.path)).length;
-      const t = new vscode.TreeItem(path.basename(p.path) || p.path,
+      const live = this.board.all().filter(e => sessions.pathKey(e.project) === sessions.pathKey(p.path)).length;
+      const t = new vscode.TreeItem(this.nameOf(p.path),
         p.pinned ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
       t.id = 'p:' + sessions.pathKey(p.path) + (p.pinned ? ':pin' : '');
       t.description = `${count} chat${count === 1 ? '' : 's'}${live ? ` · ${live} open` : ''}`;
@@ -111,7 +138,7 @@ class ProjectsProvider {
       return t;
     }
     const s = el.session;
-    const open = this.board.open.get(s.id);
+    const open = this.board.entry(s.id);
     const t = new vscode.TreeItem(s.title);
     t.id = 's:' + s.id;
     t.description = (open ? `● ${STATE_ICON[open.state][2]} · ` : '') + ago(s.mtime);
@@ -146,18 +173,18 @@ class BoardProvider {
   getChildren(el) {
     if (el) return [];
     const cols = this.board.columnsByName();
-    return [...this.board.open.values()]
-      .map(e => ({ entry: e, column: cols.get(e.name) }))
+    return this.board.all()
+      .map(e => ({ entry: e, column: e.kind === 'terminal' ? cols.get(e.terminal.name) : undefined }))
       .sort((a, b) => (a.column || 99) - (b.column || 99));
   }
 
   getTreeItem({ entry: e, column }) {
-    const t = new vscode.TreeItem(`${path.basename(e.project)}: ${e.title}`);
+    const t = new vscode.TreeItem(`${this.nameOf ? this.nameOf(e.project) : path.basename(e.project)}: ${e.title}`);
     const [icon, color, label] = STATE_ICON[e.state];
     t.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
-    t.description = `${column ? `pane ${column} · ` : ''}${e.kind} · ${label}`;
-    t.tooltip = `${e.project}\nSession ${e.sessionId}`;
-    t.contextValue = 'boardItem.' + e.kind;
+    t.description = `${e.kind === 'official' ? 'chat' : 'CLI'}${column ? ` · pane ${column}` : ''} · ${label}`;
+    t.tooltip = `${e.kind === 'official' ? 'Official Claude Code panel' : 'Claude Code CLI'} in ${e.project}\nSession ${e.sessionId}\nClick to show it`;
+    t.contextValue = 'boardItem';
     t.command = { command: 'claudeCC.focusBoardItem', title: 'Focus', arguments: [e.sessionId] };
     t.id = 'b:' + e.sessionId;
     return t;
