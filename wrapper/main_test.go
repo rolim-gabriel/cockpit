@@ -120,3 +120,17 @@ func TestOnlyChatLaunchesClaimHandovers(t *testing.T) {
 		}
 	}
 }
+
+func TestLogFromConfig(t *testing.T) {
+	root := setup(t)
+	t.Setenv("CLAUDE_CC_LOG", "")
+	log := filepath.Join(root, "launcher.log")
+	os.MkdirAll(filepath.Join(root, "state"), 0o755)
+	b, _ := json.Marshal(map[string]string{"log": log})
+	os.WriteFile(filepath.Join(root, "state", "config.json"), b, 0o644)
+	logLaunch("/proj", "resume", []string{"--resume=abc"})
+	data, err := os.ReadFile(log)
+	if err != nil || !strings.Contains(string(data), `"reason":"resume"`) {
+		t.Fatalf("log not written: %v %s", err, data)
+	}
+}

@@ -116,13 +116,8 @@ func configDir() string {
 		return d
 	}
 	// Claude Command Center writes its data folder setting here when it differs from the default.
-	if data, err := os.ReadFile(filepath.Join(stateDir(), "config.json")); err == nil {
-		var c struct {
-			DataDir string `json:"dataDir"`
-		}
-		if json.Unmarshal(data, &c) == nil && c.DataDir != "" {
-			return c.DataDir
-		}
+	if d := readConfig().DataDir; d != "" {
+		return d
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".claude")
@@ -162,6 +157,19 @@ func firstCwd(file string) string {
 		}
 	}
 	return ""
+}
+
+type config struct {
+	DataDir string `json:"dataDir"`
+	Log     string `json:"log"`
+}
+
+// readConfig reads the settings Claude Command Center hands to the launcher.
+func readConfig() (c config) {
+	if data, err := os.ReadFile(filepath.Join(stateDir(), "config.json")); err == nil {
+		json.Unmarshal(data, &c)
+	}
+	return c
 }
 
 func stateDir() string {
@@ -228,6 +236,9 @@ func isDir(p string) bool {
 
 func logLaunch(cwd, reason string, args []string) {
 	file := os.Getenv("CLAUDE_CC_LOG")
+	if file == "" {
+		file = readConfig().Log
+	}
 	if file == "" {
 		return
 	}

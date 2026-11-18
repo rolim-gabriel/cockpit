@@ -69,10 +69,14 @@ class NativeEverywhere {
 
   /** Tells the wrapper about settings it needs (it cannot read VS Code settings). */
   writeConfig() {
-    const dataDir = vscode.workspace.getConfiguration('claudeCC').get('claudeDataDir') ? sessions.dataDir() : '';
+    const cfg = vscode.workspace.getConfiguration('claudeCC');
+    const dataDir = cfg.get('claudeDataDir') ? sessions.dataDir() : '';
+    const log = cfg.get('launcherLog') ? this.logFile() : '';
     fs.mkdirSync(this.stateDir(), { recursive: true });
-    fs.writeFileSync(path.join(this.stateDir(), 'config.json'), JSON.stringify({ dataDir }));
+    fs.writeFileSync(path.join(this.stateDir(), 'config.json'), JSON.stringify({ dataDir, log }));
   }
+
+  logFile() { return path.join(this.stateDir(), 'launcher.log'); }
 
   officialConfig() { return vscode.workspace.getConfiguration('claudeCode'); }
 

@@ -435,10 +435,10 @@ function onPath(name) {
     dir && exts.some(e => { try { return fs.statSync(path.join(dir, name + e.toLowerCase())).isFile() || fs.statSync(path.join(dir, name + e)).isFile(); } catch { return false; } }));
 }
 
-function quoteCmd(c) {
+/** Quotes a command path for the terminal's shell (PowerShell needs the call operator before a quoted path). */
+function quoteCmd(c, shell = vscode.env.shell || '') {
   if (!/\s/.test(c) || /^["'&]/.test(c)) return c;
-  // PowerShell (the default Windows terminal) runs a quoted path only after the call operator.
-  return process.platform === 'win32' ? `& "${c}"` : `"${c}"`;
+  return /pwsh|powershell/i.test(path.basename(shell)) ? `& "${c}"` : `"${c}"`;
 }
 
-module.exports = { Board, gridShape, resolveClaudeCommand };
+module.exports = { Board, gridShape, resolveClaudeCommand, quoteCmd };

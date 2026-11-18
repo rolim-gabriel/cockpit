@@ -91,11 +91,23 @@ workspace (File > Save Workspace As). Folders in a multi-root workspace stay sep
 **Do not keep the same conversation open in two places at once** (for example in a CLI pane and in the official
 panel). Two programs writing to one conversation can split its history into two branches.
 
+## Troubleshooting
+
+| What you see | Why, and what to do |
+|---|---|
+| An official panel shows an error that the chat's folder does not exist | The project folder was moved, renamed, or is not synced yet (OneDrive). The launcher refuses to run the chat anywhere else. Restore the folder, then open the chat again from the sidebar. |
+| An official panel opens a blank "Untitled" chat instead of your conversation | The history link could not be made (a warning tells you why), or the conversation was deleted. The chat still opens in the CLI: right-click it, then **Open in Claude Code CLI**. |
+| A new chat ran in the wrong project | Start new chats with **+** on the project in the sidebar; the **+** inside a panel always uses the window's first folder. |
+| Other projects open in the CLI instead of the official panel | Check **Official Panel Everywhere** is on, and that `claudeCode.claudeProcessWrapper` is not set to someone else's program (the extension never overrides it). |
+| You want to see what the launcher did | Turn on **Launcher Log** and run **Claude CC: Show Launcher Log**: one line per chat start with the folder and the reason (`resume`, `pending`, `unchanged`, `missing-folder`). |
+| You want everything back to normal | Turn off **Official Panel Everywhere**: the official setting is restored and every link removed. Backups of any replaced history are in `~/.claude-command-center/backups`. |
+
 ## Settings
 
 | Setting | Default | |
 |---|---|---|
 | `claudeCC.officialPanelEverywhere` | `true` | Let the official chat panel host chats of every project (see above) |
+| `claudeCC.launcherLog` | `false` | Troubleshooting log of where each official-panel chat started |
 | `claudeCC.preferOfficialPanel` | `true` | Open chats in the official chat panel when it can host them (otherwise in the CLI) |
 | `claudeCC.claudeCommand` | `claude` | Path to the CLI if it is not on PATH |
 | `claudeCC.extraArgs` | | Extra CLI arguments, e.g. `--model opus` |

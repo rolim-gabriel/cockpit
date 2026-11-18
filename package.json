@@ -218,6 +218,11 @@
         "title": "Save Command Center (reopen with all chats)",
         "category": "Claude CC",
         "icon": "$(save)"
+      },
+      {
+        "command": "claudeCC.showLauncherLog",
+        "title": "Show Launcher Log (troubleshooting)",
+        "category": "Claude CC"
       }
     ],
     "menus": {
@@ -464,6 +469,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Let the official Claude Code chat panel open chats of **every** project, each running in its own folder. Works by setting the official `claudeCode.claudeProcessWrapper` to a small Claude Command Center program and adding hard links to those chats' history files in the first folder's history folder. Turning this off restores the setting and removes the links."
+        },
+        "claudeCC.launcherLog": {
+          "type": "boolean",
+          "default": false,
+          "description": "Troubleshooting: record which folder each official-panel chat was started in (Claude CC: Show Launcher Log). Chat messages are never logged."
         },
         "claudeCC.preferOfficialPanel": {
           "type": "boolean",

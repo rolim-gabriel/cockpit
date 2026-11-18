@@ -42,7 +42,7 @@ function activate(context) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('claudeCC.officialPanelEverywhere')) syncEverywhere();
-      if (e.affectsConfiguration('claudeCC.claudeDataDir') && native.active) native.writeConfig();
+      if ((e.affectsConfiguration('claudeCC.claudeDataDir') || e.affectsConfiguration('claudeCC.launcherLog')) && native.active) native.writeConfig();
     }),
     vscode.extensions.onDidChange(() => syncEverywhere()),
   );
@@ -265,6 +265,16 @@ function activate(context) {
     if (pick) await board.setLayout(pick.n);
   });
   reg('claudeCC.tidy', () => board.tidy());
+  reg('claudeCC.showLauncherLog', async () => {
+    if (!vscode.workspace.getConfiguration('claudeCC').get('launcherLog')) {
+      const on = await vscode.window.showInformationMessage('The launcher log is off. Turn it on? It records, for each Claude chat the official panel starts, which folder it ran in and why.', 'Turn On');
+      if (on) await vscode.workspace.getConfiguration('claudeCC').update('launcherLog', true, vscode.ConfigurationTarget.Global);
+      return;
+    }
+    const file = native.logFile();
+    if (!fs.existsSync(file)) return vscode.window.showInformationMessage('Nothing logged yet: open a chat in the official panel first.');
+    await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
+  });
   reg('claudeCC.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', 'claudeCC'));
   reg('claudeCC.restoreBoard', () => board.restore());
   reg('claudeCC.closeBoard', async () => {
