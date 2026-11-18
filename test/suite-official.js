@@ -114,6 +114,27 @@ exports.run = async () => {
     .catch(err => { console.log('launches after reopen:', JSON.stringify(launches().slice(before).map(l => [l.reason, l.cwd, l.args.filter(a => a.startsWith('--resume'))]))); throw err; });
   console.log('step 5 ok: reopened new chat resumes in docs-site');
 
+  // 5b. Closing a chat from the board closes its own tab only.
+  const labels = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t => t.input instanceof vscode.TabInputWebview).map(t => t.label);
+  await until(() => labels().length >= 2 || null, 30000, 'two panels').catch(() => {});
+  await board.reveal(board.chats.get(sid)); // step 5 closed every tab: show the notes chat again
+  await until(() => labels().some(l => /code word/i.test(l)), 30000, 'notes chat shown');
+  await sleep(4000);
+  const beforeClose = labels();
+  await board.closeEntry(board.chats.get(sid));
+  await sleep(1500);
+  const afterClose = labels();
+  assert.strictEqual(afterClose.length, beforeClose.length - 1, 'exactly one tab closed: ' + JSON.stringify([beforeClose, afterClose]));
+  assert.ok(!afterClose.some(l => /code word/i.test(l)), 'the closed tab was the notes chat');
+  assert.ok(!board.chats.has(sid), 'off the board');
+  // 5c. A chat whose link was deleted in the official panel leaves the board.
+  const docsLink = path.join(native.projectDirFor(dirs.first, projects.projects), newId + '.jsonl');
+  fs.unlinkSync(docsLink);
+  await native.sync(projects.projects);
+  projects.refresh();
+  assert.ok(!board.chats.has(newId), 'chat with deleted link left the board');
+  console.log('step 5b/5c ok: board closes the right tab and drops chats the panel can no longer find');
+
   await sleep(8000);
   await vscode.commands.executeCommand('workbench.action.closeSidebar');
   await sleep(1500);
@@ -121,7 +142,7 @@ exports.run = async () => {
 
   // 6. Turning it off restores the setting and removes only our links.
   const removed = await native.disable();
-  assert.ok(removed >= 2, 'links removed: ' + removed);
+  assert.ok(removed >= 1, 'links removed: ' + removed);
   assert.ok(!fs.existsSync(link) && fs.existsSync(realFile), 'original history kept');
   assert.ok(!vscode.workspace.getConfiguration('claudeCode').get('claudeProcessWrapper'), 'official setting restored');
   console.log('all official assertions passed');

@@ -38,7 +38,7 @@ class ProjectsProvider {
 
   async setPinned(list) {
     await this.context.globalState.update('pinnedProjects', list);
-    this.refresh();
+    await this.refreshAsync();
   }
 
   refresh() {
@@ -51,7 +51,7 @@ class ProjectsProvider {
     this.running = (async () => {
       do {
         this.again = false;
-        this.apply(await sessions.scanAllAsync());
+        try { this.apply(await sessions.scanAllAsync()); } catch (err) { console.error('Claude Command Center: refresh failed', err); }
       } while (this.again);
     })().finally(() => { this.running = undefined; });
     return this.running;

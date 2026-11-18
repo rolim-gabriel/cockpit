@@ -106,10 +106,18 @@ class Board {
   /** Takes a chat off the board and closes its pane. Its history stays. */
   async closeEntry(e) {
     if (e.kind !== 'official') return e.terminal.dispose();
+    const isClaude = t => t && t.input instanceof vscode.TabInputWebview && /claudeVSCodePanel/i.test(t.input.viewType);
+    const before = new Set(vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(isClaude));
     await this.reveal(e);
-    await sleep(300);
-    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-    if (tab && tab.input instanceof vscode.TabInputWebview) await vscode.window.tabGroups.close(tab);
+    // Close only the chat's own tab: a newly opened one if it had been closed (give it time to
+    // appear), otherwise the open tab the reveal brought to the front.
+    let target;
+    for (let i = 0; i < 20 && !target; i++) {
+      await sleep(100);
+      target = vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(isClaude).find(t => !before.has(t));
+    }
+    if (!target && isClaude(vscode.window.tabGroups.activeTabGroup.activeTab)) target = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (target) await vscode.window.tabGroups.close(target);
     this.chats.delete(e.sessionId);
     this.saveChats();
     this._onDidChange.fire();
@@ -220,16 +228,19 @@ class Board {
       if (sessionId) official = await this.native.linkTranscript(sessions.sessionFile(project, sessionId), this.firstFolder(), this.known);
       else handover = this.native.prepareNewChat(project, this.firstFolder(), this.known);
     }
+    let unclaimed = false;
     if (official) {
       // The official extension opens (or reveals) the chat with its full history in that pane;
       // our wrapper starts its Claude process in the chat's own folder.
       await vscode.commands.executeCommand(OFFICIAL_OPEN, sessionId, undefined, column);
-      if (handover && !await this.native.waitForClaim(handover)) {
+      unclaimed = !!handover && !await this.native.waitForClaim(handover);
+      if (unclaimed) this.native.dropPending(handover);
+      if (unclaimed) {
         vscode.window.showWarningMessage(`The new Claude chat for ${path.basename(project)} did not start in time, so it may be running in ${path.basename(this.firstFolder())}. Close it and try again.`);
       }
       await this.waitForPane(column);
       if (sessionId) this.trackOfficial(project, sessionId, opts.title);
-      else {
+      else if (!unclaimed) {
         const known = this.known.get(sessions.pathKey(project));
         this.awaiting.push({ project, since: Date.now(), before: new Set(known ? known.sessions.map(s => s.id) : []) });
       }
@@ -382,13 +393,15 @@ class Board {
     // New official chats: the first new conversation in that project is the one we opened.
     this.awaiting = this.awaiting.filter(a => {
       const p = projects.get(sessions.pathKey(a.project));
-      const fresh = p && p.sessions.filter(s => !a.before.has(s.id) && !this.entry(s.id)).sort((x, y) => x.mtime - y.mtime)[0];
+      const fresh = p && p.sessions.filter(s => !a.before.has(s.id) && !this.entry(s.id) && /vscode/i.test(s.entrypoint))
+        .sort((x, y) => x.mtime - y.mtime)[0];
       if (fresh) { this.trackOfficial(a.project, fresh.id, fresh.title); return false; }
       return Date.now() - a.since < 10 * 60 * 1000;
     });
-    // Official chats whose history was deleted leave the board.
+    // Official chats whose history was deleted (or, for other projects, whose link was deleted in the panel) leave the board.
     for (const [id, c] of this.chats) {
-      if (!fs.existsSync(c.file)) { this.chats.delete(id); changed = true; }
+      const gone = !fs.existsSync(c.file) || this.native.linkDeleted(id);
+      if (gone) { this.chats.delete(id); changed = true; }
     }
     for (const e of this.all()) {
       const p = projects.get(sessions.pathKey(e.project));

@@ -2,7 +2,7 @@
   "name": "claude-command-center",
   "displayName": "Claude Command Center",
   "description": "Native Claude Code sessions for many projects side by side in one VS Code window: a resizable grid of official Claude Code chat panels and Claude Code CLI panes, each in its own project folder and resumed with its full history.",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "publisher": "local",
   "license": "MIT",
   "engines": {

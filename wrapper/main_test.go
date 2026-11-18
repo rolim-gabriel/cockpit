@@ -134,3 +134,17 @@ func TestLogFromConfig(t *testing.T) {
 		t.Fatalf("log not written: %v %s", err, data)
 	}
 }
+
+func TestPendingMatchesWindowThroughSymlink(t *testing.T) {
+	root := setup(t)
+	real := filepath.Join(root, "real-first")
+	os.MkdirAll(real, 0o755)
+	link := filepath.Join(root, "linked-first")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("symlinks not available")
+	}
+	pending(t, root, "1000-a", "/projX", link, time.Now().Add(time.Minute).UnixMilli())
+	if got, _ := chooseFolder([]string{"--input-format", "x"}, real); got != "/projX" {
+		t.Fatalf("got %q", got)
+	}
+}

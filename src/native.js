@@ -26,7 +26,8 @@ class NativeEverywhere {
   /** @param {vscode.ExtensionContext} context */
   constructor(context) {
     this.context = context;
-    this.pendingNew = []; // [{ cwd, firstFolder, since, before }]
+    this.pendingNew = []; // [{ file, cwd, firstFolder, since, before }]
+    this.deletedLinks = new Set(); // session ids whose link was deleted in the official panel
   }
 
   get links() { return this.context.globalState.get('nativeLinks', []); }
@@ -118,13 +119,16 @@ class NativeEverywhere {
   async disable() {
     if (['ours', 'stale'].includes(this.wrapperState())) await this.officialConfig().update(WRAPPER_SETTING, undefined, vscode.ConfigurationTarget.Global);
     let removed = 0;
+    const left = [];
     for (const l of this.links) {
+      if (!fs.existsSync(l.link)) continue;
       try {
-        // Only ever remove the second name of a file that still exists under its original name.
-        if (fs.existsSync(l.link) && fs.existsSync(l.real) && sameFile(l.link, l.real)) { fs.unlinkSync(l.link); removed++; }
-      } catch { /* leave it */ }
+        // Only ever remove the second name of a file that still exists, with the same content, under its original name.
+        if (fs.existsSync(l.real) && sameFile(l.link, l.real) !== false) { fs.unlinkSync(l.link); removed++; continue; }
+      } catch { /* in use: try again next time */ }
+      left.push(l); // keep tracking what could not be removed
     }
-    await this.setLinks([]);
+    await this.setLinks(left);
     return removed;
   }
 
@@ -150,7 +154,7 @@ class NativeEverywhere {
     const link = path.join(dir, path.basename(realFile));
     if (path.resolve(link) === path.resolve(realFile)) return true; // already a first-folder chat
     if (fs.existsSync(link)) {
-      if (sameFile(link, realFile)) return true;
+      if (sameFile(link, realFile) !== false) return true;
       const ours = this.links.find(l => l.link === link);
       if (!ours) return false; // not ours: never touch it
       try { this.reunite(ours); return true; } catch { return false; }
@@ -163,7 +167,18 @@ class NativeEverywhere {
       return false;
     }
     await this.setLinks([...this.links.filter(l => l.link !== link), { link, real: realFile }]);
+    this.deletedLinks.delete(path.basename(realFile, '.jsonl'));
     return true;
+  }
+
+  /** Whether this chat's link was deleted (in the official panel), so the panel can no longer find it. */
+  linkDeleted(sessionId) {
+    return this.deletedLinks.has(sessionId);
+  }
+
+  /** Forgets a new-chat handover that was never claimed. */
+  dropPending(file) {
+    this.pendingNew = this.pendingNew.filter(p => p.file !== file);
   }
 
   /**
@@ -177,7 +192,7 @@ class NativeEverywhere {
     fs.writeFileSync(file + '.tmp', JSON.stringify({ cwd, from: firstFolder, expires: Date.now() + PENDING_TTL_MS }));
     fs.renameSync(file + '.tmp', file);
     const proj = known && known.get(sessions.pathKey(cwd));
-    this.pendingNew.push({ cwd, firstFolder, since: Date.now(), before: new Set(proj ? proj.sessions.map(s => s.id) : []) });
+    this.pendingNew.push({ file, cwd, firstFolder, since: Date.now(), before: new Set(proj ? proj.sessions.map(s => s.id) : []) });
     return file;
   }
 
@@ -204,7 +219,8 @@ class NativeEverywhere {
     for (const p of this.pendingNew) {
       const proj = projects.get(sessions.pathKey(p.cwd));
       for (const s of (proj ? proj.sessions : [])) {
-        if (!p.before.has(s.id)) { p.before.add(s.id); await this.linkTranscript(s.file, p.firstFolder, projects); }
+        // Only chats the official panel started (not a CLI pane or an outside `claude` run).
+        if (!p.before.has(s.id) && /vscode/i.test(s.entrypoint)) { p.before.add(s.id); await this.linkTranscript(s.file, p.firstFolder, projects); }
       }
     }
 
@@ -212,8 +228,12 @@ class NativeEverywhere {
     const keep = [];
     for (const l of this.links) {
       // Deleted from the official panel (link gone) or original gone: stop tracking, never recreate.
-      if (!fs.existsSync(l.link) || !fs.existsSync(l.real)) { changed = true; continue; }
-      if (!sameFile(l.link, l.real)) {
+      if (!fs.existsSync(l.link) || !fs.existsSync(l.real)) {
+        if (!fs.existsSync(l.link)) this.deletedLinks.add(path.basename(l.link, '.jsonl'));
+        changed = true;
+        continue;
+      }
+      if (sameFile(l.link, l.real) === false) {
         // One side was replaced by a new file: keep the newer content under both names, back up the other.
         try { this.reunite(l); } catch { /* retry next time */ }
       }
@@ -227,19 +247,34 @@ class NativeEverywhere {
     const a = fs.statSync(l.real), b = fs.statSync(l.link);
     const linkNewer = b.mtimeMs > a.mtimeMs || (b.mtimeMs === a.mtimeMs && b.size > a.size);
     const [keepFile, oldFile] = linkNewer ? [l.link, l.real] : [l.real, l.link];
+    const old = fs.statSync(oldFile);
     const backups = path.join(this.stateDir(), 'backups');
     fs.mkdirSync(backups, { recursive: true });
-    fs.copyFileSync(oldFile, path.join(backups, `${Date.now()}-${path.basename(oldFile)}`));
+    // One backup per version of the older file, however often the swap below has to be retried.
+    const backup = path.join(backups, `${path.basename(oldFile, '.jsonl')}-${old.size}-${Math.round(old.mtimeMs)}.jsonl`);
+    if (!fs.existsSync(backup)) fs.copyFileSync(oldFile, backup);
     const tmp = oldFile + '.ccc-tmp';
-    fs.linkSync(keepFile, tmp);
-    fs.renameSync(tmp, oldFile); // the old name now points at the kept content
+    try {
+      try { fs.unlinkSync(tmp); } catch { /* none left over */ }
+      fs.linkSync(keepFile, tmp);
+      fs.renameSync(tmp, oldFile); // the old name now points at the kept content
+    } finally {
+      try { fs.unlinkSync(tmp); } catch { /* renamed away */ }
+    }
   }
 }
 
+/**
+ * true / false, or undefined when the drive cannot tell (some network drives report inode 0 for
+ * every file). Callers never repair or delete on undefined.
+ */
 function sameFile(a, b) {
   const x = fs.statSync(a, { bigint: true }), y = fs.statSync(b, { bigint: true });
-  // Some network drives report 0 for every file; never treat those as the same file.
-  return x.ino !== 0n && x.ino === y.ino && x.dev === y.dev;
+  if (x.ino === 0n || y.ino === 0n) {
+    // Two names of one file always agree on size and time; if they do not, they are different files.
+    return x.size === y.size && x.mtimeMs === y.mtimeMs ? undefined : false;
+  }
+  return x.ino === y.ino && x.dev === y.dev;
 }
 
 module.exports = { NativeEverywhere };

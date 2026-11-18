@@ -14,7 +14,8 @@ const MAX_HEAD_BYTES = 1024 * 1024;
 const TAIL_BYTES = 64 * 1024;
 const KEEP_TEXT = 600; // prompt text kept in the cache (tooltips show 400)
 
-const metaCache = new Map(); // file -> { key, meta }
+const metaCache = new Map(); // file -> { key, meta, seen }
+const CACHE_VERSION = 1; // bump when the metadata format changes
 
 function dataDir() {
   const configured = vscode.workspace.getConfiguration('claudeCC').get('claudeDataDir');
@@ -172,18 +173,23 @@ async function readMetaAsync(file, stat) {
 /** The metadata cache survives restarts, so only new or changed transcripts are read. */
 function loadCache(file) {
   try {
-    for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')))) metaCache.set(k, v);
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (data.version !== CACHE_VERSION) return; // older format: rebuild
+    for (const [k, v] of Object.entries(data.entries)) metaCache.set(k, v);
   } catch { /* first run */ }
 }
 
 function saveCache(file) {
+  const tmp = `${file}.${process.pid}.tmp`; // several windows may save at once
   try {
     const live = {};
     for (const [k, v] of metaCache) if (v.seen) live[k] = { key: v.key, meta: v.meta };
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file + '.tmp', JSON.stringify(live));
-    fs.renameSync(file + '.tmp', file);
-  } catch { /* cache only */ }
+    fs.writeFileSync(tmp, JSON.stringify({ version: CACHE_VERSION, entries: live }));
+    fs.renameSync(tmp, file);
+  } catch {
+    try { fs.unlinkSync(tmp); } catch { /* nothing written */ }
+  }
 }
 
 function oneLine(s) {
@@ -224,7 +230,13 @@ function markSeen(file) {
  * Scan all sessions. Returns Map<pathKey, { path, sessions: meta[] }> with
  * sessions sorted newest first.
  */
+// Only transcripts found by the latest full scan are saved, so deleted ones drop out of the cache.
+function resetSeen() {
+  for (const v of metaCache.values()) v.seen = false;
+}
+
 function scanAll() {
+  resetSeen();
   const root = projectsDir();
   const metas = [];
   let dirs = [];
@@ -248,6 +260,7 @@ function scanAll() {
 
 /** Same as scanAll, without blocking VS Code: reads in small batches and yields in between. */
 async function scanAllAsync() {
+  resetSeen();
   const root = projectsDir();
   const metas = [];
   let dirs = [];

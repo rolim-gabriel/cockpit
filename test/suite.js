@@ -112,6 +112,32 @@ exports.run = async () => {
   const saved2 = JSON.parse(fs.readFileSync(ws, 'utf8'));
   assert.deepStrictEqual(saved2.folders.map(f => f.path), [work, found[0].path, found[1].path], 'command center folders');
   assert.strictEqual(saved2.settings['editor.fontSize'], 15, 'existing workspace settings kept');
+  // History link repair: when the original is replaced by a new file, the newer content ends up under both
+  // names, the older is backed up exactly once however often repair runs, and no temp file is left.
+  const { native } = await ext.activate();
+  process.env.CLAUDE_CC_STATE_DIR = path.join(tmp, 'ccstate');
+  const realT = path.join(tmp, 'real.jsonl'), linkT = path.join(tmp, 'link.jsonl');
+  fs.writeFileSync(realT, 'v1\n');
+  fs.linkSync(realT, linkT);
+  await native.setLinks([{ link: linkT, real: realT }]);
+  fs.writeFileSync(realT + '.new', 'v1\nv2\n');
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(realT + '.new', later, later);
+  fs.renameSync(realT + '.new', realT); // replaced: the two names are now different files
+  await native.sync(new Map());
+  await native.sync(new Map());
+  assert.strictEqual(fs.statSync(realT).ino, fs.statSync(linkT).ino, 'reunited');
+  assert.strictEqual(fs.readFileSync(linkT, 'utf8'), 'v1\nv2\n', 'newer content kept');
+  const backupsDir = path.join(tmp, 'ccstate', 'backups');
+  assert.strictEqual(fs.readdirSync(backupsDir).length, 1, 'one backup of the older version');
+  assert.strictEqual(fs.readFileSync(path.join(backupsDir, fs.readdirSync(backupsDir)[0]), 'utf8'), 'v1\n');
+  assert.ok(!fs.existsSync(linkT + '.ccc-tmp') && !fs.existsSync(realT + '.ccc-tmp'), 'no temp file left');
+  // A link deleted (in the official panel) is respected: not recreated, no longer tracked.
+  fs.unlinkSync(linkT);
+  await native.sync(new Map());
+  assert.ok(!fs.existsSync(linkT) && native.links.length === 0, 'deleted link stays deleted');
+  delete process.env.CLAUDE_CC_STATE_DIR;
+
   // Same-named projects in different places are told apart by their parent folder.
   const twinA = path.join(tmp, 'OneDrive', 'shop'), twinB = path.join(tmp, 'Local', 'shop');
   await projects.setPinned([twinA, twinB]);

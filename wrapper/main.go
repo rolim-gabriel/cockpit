@@ -221,7 +221,14 @@ func claimPending(launchDir string) string {
 	return ""
 }
 
+// samePath: the same folder, even when one path goes through a symlink (/tmp vs /private/tmp on
+// macOS) or differs only in letter case (Windows, macOS).
 func samePath(a, b string) bool {
+	if x, err := os.Stat(a); err == nil {
+		if y, err := os.Stat(b); err == nil {
+			return os.SameFile(x, y)
+		}
+	}
 	a, b = filepath.Clean(a), filepath.Clean(b)
 	if runtime.GOOS == "linux" {
 		return a == b
